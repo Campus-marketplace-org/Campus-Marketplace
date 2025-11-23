@@ -18,7 +18,7 @@ This project folder contains the follwing files:
 
 _DESIGN NOTES_
 
-*		Diagram : handles core logic and data structures such as users, listings, and messaging.
+*		Backend : handles core logic and data structures such as users, listings, and messaging.
 *		Frontend : provides an interface for users to interact with the system.
 *		Diagram : includes design documentation that visualizes class relationships and architecture.
 *		README.md : high-level overview of this project and files
