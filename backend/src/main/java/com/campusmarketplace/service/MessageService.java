@@ -21,21 +21,21 @@ public class MessageService {
         this.userRepository = userRepository;
     }
 
-    public List<Message> getMessagesBetweenUsers(Long user1Id, Long user2Id) {
-        if (!userRepository.existsById(user1Id)) {
-            throw new RuntimeException("User with ID " + user1Id + " not found");
-        }
-        if (!userRepository.existsById(user2Id)) {
-            throw new RuntimeException("User with ID " + user2Id + " not found");
-        }
-        return messageRepository.findMessagesBetweenUsers(user1Id, user2Id);
+    public List<Message> getMessagesBetweenUsers(String username1, String username2) {
+        User user1 = userRepository.findByUsername(username1)
+                .orElseThrow(() -> new RuntimeException("User " + username1 + " not found"));
+        User user2 = userRepository.findByUsername(username2)
+                .orElseThrow(() -> new RuntimeException("User " + username2 + " not found"));
+
+        return messageRepository.findMessagesBetweenUsers(user1.getId(), user2.getId());
+
     }
 
-    public Message sendMessage(Long fromUserId, Long toUserId, String content) {
-        User fromUser = userRepository.findById(fromUserId)
-                .orElseThrow(() -> new RuntimeException("Sender user not found"));
-        User toUser = userRepository.findById(toUserId)
-                .orElseThrow(() -> new RuntimeException("Receiver user not found"));
+    public Message sendMessage(String fromUsername, String toUsername, String content) {
+        User fromUser = userRepository.findByUsername(fromUsername)
+                .orElseThrow(() -> new RuntimeException("Sender user " + fromUsername + " not found"));
+        User toUser = userRepository.findByUsername(toUsername)
+                .orElseThrow(() -> new RuntimeException("Receiver user " + toUsername + " not found"));
 
         Message message = new Message();
         message.setFrom(fromUser);
