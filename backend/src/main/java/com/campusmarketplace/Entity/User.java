@@ -1,5 +1,6 @@
 package com.campusmarketplace.Entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import static jakarta.persistence.GenerationType.IDENTITY;
@@ -24,6 +25,7 @@ public class User {
     @Column(unique = true, nullable = false)
     private String username;
 
+    @JsonIgnore
     private String password;
 
     private String email;

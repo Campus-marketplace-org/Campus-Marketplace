@@ -1,11 +1,13 @@
 package com.campusmarketplace.controller;
 
 import com.campusmarketplace.Entity.Message;
+import com.campusmarketplace.dto.MessageResponse;
 import com.campusmarketplace.service.MessageService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/messages")
@@ -18,18 +20,42 @@ public class MessageController {
     }
 
     @GetMapping("/between")
-    public ResponseEntity<List<Message>> getMessagesBetweenUsers(@RequestParam Long user1Id,
-                                                                 @RequestParam Long user2Id) {
-        List<Message> messages = messageService.getMessagesBetweenUsers(user1Id, user2Id);
-        return ResponseEntity.ok(messages);
+    public ResponseEntity<List<MessageResponse>> getMessagesBetweenUsers(
+            @RequestParam String username1,
+            @RequestParam String username2) {
+
+        List<Message> messages = messageService.getMessagesBetweenUsers(username1, username2);
+
+        List<MessageResponse> response = messages.stream()
+                .map(msg -> new MessageResponse(
+                        msg.getId(),
+                        msg.getFrom().getUsername(),
+                        msg.getTo().getUsername(),
+                        msg.getTimestamp(),
+                        msg.getContent()
+                ))
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/send")
-    public ResponseEntity<Message> sendMessage(@RequestParam Long fromUserId,
-                                               @RequestParam Long toUserId,
+    public ResponseEntity<MessageResponse> sendMessage(@RequestParam String fromUsername,
+                                               @RequestParam String toUsername,
                                                @RequestBody String content) {
-        Message message = messageService.sendMessage(fromUserId, toUserId, content);
-        return ResponseEntity.ok(message);
+        System.out.println("Sending message from " + fromUsername + " to " + toUsername + ": " + content);
+        Message message = messageService.sendMessage(fromUsername, toUsername, content);
+
+        MessageResponse response = new MessageResponse(
+                message.getId(),
+                message.getFrom().getUsername(),
+                message.getTo().getUsername(),
+                message.getTimestamp(),
+                message.getContent()
+        );
+
+        return ResponseEntity.ok(response);
+
     }
 
 }
