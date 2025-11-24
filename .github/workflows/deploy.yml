@@ -31,7 +31,6 @@ jobs:
         working-directory: backend
         run: mvn -q -DskipTests package
 
-      # Create a unique release dir using the current run id (RUN_ID is passed to the remote)
       - name: Prepare dirs on EC2
         uses: appleboy/ssh-action@v0.1.10
         env:
@@ -49,7 +48,6 @@ jobs:
             chmod 755 "$BASE" "$BASE/releases" "$REL"
             echo "Release dir: $REL"
 
-          
       - name: Upload JAR to EC2 (release dir)
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -59,15 +57,14 @@ jobs:
           source: "backend/target/*.jar"
           target: "/home/ec2-user/app/releases/${{ github.run_id }}/"
           overwrite: true
+          # note: some versions ignore strip_components; we don't rely on it
           strip_components: 2
 
-
-      # Short remote step: stop -> swap -> start (no long waiting loops here)
       - name: Swap JAR and restart (short SSH)
         uses: appleboy/ssh-action@v0.1.10
         timeout-minutes: 10
         env:
-          RUN_ID:                 ${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}
           SPRING_DATASOURCE_PASSWORD: ${{ secrets.SPRING_DATASOURCE_PASSWORD }}
           SUPABASE_S3_ACCESS_KEY:     ${{ secrets.SUPABASE_S3_ACCESS_KEY }}
           SUPABASE_S3_SECRET_KEY:     ${{ secrets.SUPABASE_S3_SECRET_KEY }}
@@ -83,8 +80,16 @@ jobs:
             REL=${BASE}/releases/${RUN_ID}
             cd "$BASE"
 
-            NEW_JAR="$(ls -1t "$REL"/*.jar | head -n1)"
-            echo "New artifact: $NEW_JAR"
+            echo "📂 Upload tree:"
+            ls -lR "$REL" | head -200 || true
+
+            # Robust: find newest jar recursively (handles nested backend/target/)
+            NEW_JAR="$(find "$REL" -type f -name '*.jar' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
+            if [[ -z "${NEW_JAR:-}" ]]; then
+              echo "❌ No JAR found under $REL"
+              exit 1
+            fi
+            echo "📦 New artifact: $NEW_JAR"
 
             # Stop old app by PID file; fallback to pkill
             if [[ -f app.pid ]]; then
@@ -108,7 +113,7 @@ jobs:
             cp -f "$NEW_JAR" app-new.jar
             mv -f app-new.jar app.jar
 
-            # Start and detach immediately
+            # Start and detach
             nohup java -jar app.jar \
               --spring.datasource.password="${SPRING_DATASOURCE_PASSWORD}" \
               --supabase.s3.access-key="${SUPABASE_S3_ACCESS_KEY}" \
@@ -120,9 +125,10 @@ jobs:
             echo $! > app.pid
             echo "Started PID $(cat app.pid)"
 
-      # Readiness check from the runner (avoids long remote loops/SIGTERM)
+      # Runner-side readiness (simple TCP); if your SG blocks this, switch to an SSH health step instead.
       - name: Wait for 8080 on EC2
         timeout-minutes: 5
+        shell: bash
         run: |
           set -e
           HOST="${{ secrets.EC2_HOST }}"
