@@ -39,7 +39,7 @@ jobs:
             mkdir -p /home/ec2-user/app/releases/upload
             chmod 755 /home/ec2-user/app /home/ec2-user/app/releases /home/ec2-user/app/releases/upload
 
-      # Upload JAR **directly** into releases/upload/
+      # Copy the built JAR to the upload area on the instance
       - name: Upload JAR to EC2 (releases/upload)
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -49,6 +49,7 @@ jobs:
           source: "backend/target/*.jar"
           target: "/home/ec2-user/app/releases/upload/"
           overwrite: true
+          # (Don't rely on strip_components; we'll search recursively on the instance)
 
       # Swap newest upload into app.jar and restart
       - name: Deploy and Restart Application
@@ -71,13 +72,13 @@ jobs:
             REL_DIR=/home/ec2-user/app/releases/upload
             cd "$APP_DIR"
 
-            echo "📂 Contents of $REL_DIR:"
-            ls -l "$REL_DIR" || true
+            echo "📂 Upload tree:"
+            ls -lR "$REL_DIR" || true
 
-            # Pick newest uploaded jar from releases/upload/
-            NEW_JAR="$(ls -1t "$REL_DIR"/*.jar 2>/dev/null | head -n1 || true)"
+            # Pick newest JAR recursively (handles nested backend/target paths)
+            NEW_JAR="$(find "$REL_DIR" -type f -name '*.jar' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
             if [[ -z "${NEW_JAR:-}" ]]; then
-              echo "❌ No JAR found in $REL_DIR after upload."
+              echo "❌ No JAR found anywhere under $REL_DIR"
               exit 1
             fi
             echo "📦 New release: $NEW_JAR"
