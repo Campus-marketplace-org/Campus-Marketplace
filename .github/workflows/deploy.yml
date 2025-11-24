@@ -27,24 +27,29 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Build (backend/)
+      - name: Build JAR (backend/)
         working-directory: backend
         run: mvn -q -DskipTests package
 
+      # Create a unique release dir using the current run id (RUN_ID is passed to the remote)
       - name: Prepare dirs on EC2
         uses: appleboy/ssh-action@v0.1.10
+        env:
+          RUN_ID: ${{ github.run_id }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
+          envs: RUN_ID
           script: |
-            set -e
+            set -euo pipefail
             BASE=/home/ec2-user/app
-            REL=${BASE}/releases/${GITHUB_RUN_ID}
+            REL=${BASE}/releases/${RUN_ID}
             mkdir -p "$REL"
             chmod 755 "$BASE" "$BASE/releases" "$REL"
             echo "Release dir: $REL"
 
+      # Upload the jar into that exact release dir
       - name: Upload JAR to EC2 (release dir)
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -55,11 +60,12 @@ jobs:
           target: "/home/ec2-user/app/releases/${{ github.run_id }}/"
           overwrite: true
 
-      # Keep this remote step SHORT (no long loops)
+      # Short remote step: stop -> swap -> start (no long waiting loops here)
       - name: Swap JAR and restart (short SSH)
         uses: appleboy/ssh-action@v0.1.10
         timeout-minutes: 10
         env:
+          RUN_ID:                 ${{ github.run_id }}
           SPRING_DATASOURCE_PASSWORD: ${{ secrets.SPRING_DATASOURCE_PASSWORD }}
           SUPABASE_S3_ACCESS_KEY:     ${{ secrets.SUPABASE_S3_ACCESS_KEY }}
           SUPABASE_S3_SECRET_KEY:     ${{ secrets.SUPABASE_S3_SECRET_KEY }}
@@ -68,17 +74,17 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
-          envs: SPRING_DATASOURCE_PASSWORD,SUPABASE_S3_ACCESS_KEY,SUPABASE_S3_SECRET_KEY,JWT_SECRET
+          envs: RUN_ID,SPRING_DATASOURCE_PASSWORD,SUPABASE_S3_ACCESS_KEY,SUPABASE_S3_SECRET_KEY,JWT_SECRET
           script: |
             set -euo pipefail
             BASE=/home/ec2-user/app
-            REL=${BASE}/releases/${GITHUB_RUN_ID}
+            REL=${BASE}/releases/${RUN_ID}
             cd "$BASE"
 
             NEW_JAR="$(ls -1t "$REL"/*.jar | head -n1)"
             echo "New artifact: $NEW_JAR"
 
-            # Stop old app by pid file if present; fallback pkill
+            # Stop old app by PID file; fallback to pkill
             if [[ -f app.pid ]]; then
               PID="$(cat app.pid || true)"
               if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
@@ -111,10 +117,9 @@ jobs:
 
             echo $! > app.pid
             echo "Started PID $(cat app.pid)"
-            # <-- Exit now. Let the next step do readiness checks from the runner.
 
-      # Readiness check from the RUNNER (no SSH; avoids SIGTERM on remote)
-      - name: Wait for port 8080 on EC2
+      # Readiness check from the runner (avoids long remote loops/SIGTERM)
+      - name: Wait for 8080 on EC2
         timeout-minutes: 5
         run: |
           set -e
@@ -130,7 +135,6 @@ jobs:
           echo "Port 8080 did not open in time"
           exit 1
 
-      # Optional: fetch last 100 log lines for convenience
       - name: Show last server logs
         if: always()
         uses: appleboy/ssh-action@v0.1.10
@@ -139,4 +143,4 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
           script: |
-            tail -n 100 /home/ec2-user/app/app.log || true
+            tail -n 120 /home/ec2-user/app/app.log || true
