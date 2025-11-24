@@ -23,12 +23,12 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      # Build inside backend/, so artifact lands in backend/target/
+      # Build inside backend/, artifact -> backend/target/*.jar
       - name: Build JAR
         working-directory: backend
         run: mvn clean package -DskipTests
 
-      # Ensure directories exist on EC2
+      # Ensure target dirs exist (incl. releases/upload)
       - name: Prepare EC2 dirs
         uses: appleboy/ssh-action@v0.1.10
         with:
@@ -36,21 +36,21 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
           script: |
-            mkdir -p /home/ec2-user/app/releases
-            chmod 755 /home/ec2-user/app /home/ec2-user/app/releases
+            mkdir -p /home/ec2-user/app/releases/upload
+            chmod 755 /home/ec2-user/app /home/ec2-user/app/releases /home/ec2-user/app/releases/upload
 
-      # Upload the freshly built JAR to /app/releases/ (never overwrite app.jar directly)
-      - name: Upload JAR to EC2 (releases/)
+      # Upload JAR **directly** into releases/upload/
+      - name: Upload JAR to EC2 (releases/upload)
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
           source: "backend/target/*.jar"
-          target: "/home/ec2-user/app/releases/"
+          target: "/home/ec2-user/app/releases/upload/"
           overwrite: true
 
-      # Swap in newest release and restart
+      # Swap newest upload into app.jar and restart
       - name: Deploy and Restart Application
         uses: appleboy/ssh-action@v0.1.10
         env:
@@ -68,13 +68,13 @@ jobs:
             set -u
 
             APP_DIR=/home/ec2-user/app
-            REL_DIR=/home/ec2-user/app/releases
+            REL_DIR=/home/ec2-user/app/releases/upload
             cd "$APP_DIR"
 
             echo "📂 Contents of $REL_DIR:"
             ls -l "$REL_DIR" || true
 
-            # Pick newest uploaded jar from releases/
+            # Pick newest uploaded jar from releases/upload/
             NEW_JAR="$(ls -1t "$REL_DIR"/*.jar 2>/dev/null | head -n1 || true)"
             if [[ -z "${NEW_JAR:-}" ]]; then
               echo "❌ No JAR found in $REL_DIR after upload."
@@ -134,3 +134,10 @@ jobs:
                 echo "✅ App listening on 8080 (no actuator)"
                 tail -n 80 "$APP_DIR/app.log" || true
                 exit 0
+              fi
+              sleep 1
+            done
+
+            echo "❌ App failed readiness within 60s"
+            tail -n 200 "$APP_DIR/app.log" || true
+            exit 1
