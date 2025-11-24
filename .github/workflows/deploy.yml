@@ -5,6 +5,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+concurrency:
+  group: backend-ec2
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -20,34 +24,43 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      # Build inside backend/, JAR -> backend/target/
-      - name: Build JAR
+      - name: Build JAR (backend/)
         working-directory: backend
         run: mvn clean package -DskipTests
 
-      - name: Prepare EC2 directory
+      - name: Show local artifact checksum
+        working-directory: backend/target
+        run: |
+          echo "Local artifacts:"
+          ls -l *.jar
+          echo "Local sha256:"
+          sha256sum *.jar || true
+
+      - name: Prepare dirs on EC2
         uses: appleboy/ssh-action@v0.1.10
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
+          command_timeout: 15m
           script: |
             set -euo pipefail
-            mkdir -p /home/ec2-user/app
-            chmod 755 /home/ec2-user/app
+            BASE=/home/ec2-user/app
+            mkdir -p "$BASE/incoming"
+            chmod 755 "$BASE" "$BASE/incoming"
+            echo "Prepared $BASE and $BASE/incoming"
 
-      # Copy built JAR to /home/ec2-user/app/
-      - name: Copy JAR to EC2
+      - name: Upload JAR to EC2 (incoming/)
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
           source: "backend/target/*.jar"
-          target: "/home/ec2-user/app/"
+          target: "/home/ec2-user/app/incoming/"
           overwrite: true
 
-      - name: Deploy and Restart Application (with app.jar fallback)
+      - name: Deploy and Restart Application
         uses: appleboy/ssh-action@v0.1.10
         env:
           SPRING_DATASOURCE_PASSWORD: ${{ secrets.SPRING_DATASOURCE_PASSWORD }}
@@ -59,45 +72,49 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
           envs: SPRING_DATASOURCE_PASSWORD,SUPABASE_S3_ACCESS_KEY,SUPABASE_S3_SECRET_KEY,JWT_SECRET
-          script_stop: false
+          command_timeout: 15m
           script: |
             set -euo pipefail
-
             APP_DIR=/home/ec2-user/app
+            INCOMING="$APP_DIR/incoming"
+
             cd "$APP_DIR"
 
-            echo "📂 JARs in $APP_DIR:"
-            ls -l *.jar 2>/dev/null || true
+            echo "📂 Incoming contents:"
+            ls -l "$INCOMING" || true
 
+            # Pick newest JAR from incoming (recursively, in case plugin creates subdirs)
+            NEW_JAR="$(find "$INCOMING" -type f -name '*.jar' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
+            if [[ -z "${NEW_JAR:-}" ]]; then
+              echo "❌ No JAR in $INCOMING"
+              exit 1
+            fi
+
+            echo "📦 New artifact: $NEW_JAR"
+            NEW_SHA="$(sha256sum "$NEW_JAR" | awk '{print $1}')"
+            echo "🔎 New sha256: $NEW_SHA"
+
+            CUR_SHA="(none)"
             if [[ -f app.jar ]]; then
-              echo "🔎 Current app.jar sha256:"
-              sha256sum app.jar || true
+              CUR_SHA="$(sha256sum app.jar | awk '{print $1}')"
+              echo "🔎 Current app.jar sha256: $CUR_SHA"
             fi
 
-            # Try to pick newest jar EXCLUDING app.jar
-            UPLOADED_JAR="$(find "$APP_DIR" -maxdepth 1 -type f -name '*.jar' ! -name 'app.jar' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
-
-            # If none found, fall back to app.jar (common when Maven builds finalName=app)
-            if [[ -z "${UPLOADED_JAR:-}" ]]; then
-              echo "ℹ️ No uploaded JAR found excluding app.jar. Falling back to app.jar (was likely overwritten by SCP)."
-              UPLOADED_JAR="$APP_DIR/app.jar"
+            if [[ -f app.jar && "$NEW_SHA" = "$CUR_SHA" ]]; then
+              echo "ℹ️ Artifact content unchanged. Restarting anyway to be safe."
             fi
 
-            echo "📦 Selected JAR: $UPLOADED_JAR"
-            echo "🔎 Selected JAR sha256:"
-            sha256sum "$UPLOADED_JAR" || true
-
-            # --- STOP OLD PROCESS ---
-            if [[ -f "$APP_DIR/app.pid" ]]; then
-              OLD_PID="$(cat "$APP_DIR/app.pid" || true)"
-              if [[ -n "${OLD_PID:-}" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
-                echo "🛑 Stopping existing PID $OLD_PID"
-                kill "$OLD_PID" || true
+            # Stop existing process via PID, then fallback
+            if [[ -f app.pid ]]; then
+              PID="$(cat app.pid || true)"
+              if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
+                echo "🛑 Stopping PID $PID"
+                kill "$PID" || true
               fi
             fi
             pkill -f "java .*app\.jar" || true
 
-            # Wait until :8080 is free (max ~30s)
+            # Wait for port 8080 to free (max 30s)
             for i in {1..30}; do
               if ss -ltn '( sport = :8080 )' | grep -q 8080; then
                 echo "⏳ Waiting for 8080 to free ($i/30)"
@@ -111,18 +128,13 @@ jobs:
               exit 1
             fi
 
-            # --- STAGE NEW ARTIFACT (skip if it's already app.jar) ---
-            if [[ "$UPLOADED_JAR" != "$APP_DIR/app.jar" ]]; then
-              cp -f "$UPLOADED_JAR" "$APP_DIR/app-new.jar"
-              mv -f "$APP_DIR/app-new.jar" "$APP_DIR/app.jar"
-              echo "✅ Replaced app.jar with $(basename "$UPLOADED_JAR")"
-              echo "🔎 New app.jar sha256:"
-              sha256sum "$APP_DIR/app.jar" || true
-            else
-              echo "↩️ Using existing app.jar (already updated by SCP)."
-            fi
+            # Replace app.jar atomically
+            cp -f "$NEW_JAR" app-new.jar
+            mv -f app-new.jar app.jar
+            echo "✅ app.jar updated"
+            echo "🔎 app.jar sha256 now: $(sha256sum app.jar | awk '{print $1}')"
 
-            # --- START NEW PROCESS ---
+            # Start app
             echo "🚀 Starting Spring Boot..."
             nohup java -jar app.jar \
               --spring.datasource.password="${SPRING_DATASOURCE_PASSWORD}" \
@@ -130,13 +142,11 @@ jobs:
               --supabase.s3.secret-key="${SUPABASE_S3_SECRET_KEY}" \
               --jwt.secret="${JWT_SECRET}" \
               --server.port=8080 \
-              > "$APP_DIR/app.log" 2>&1 &
+              > app.log 2>&1 &
 
-            echo $! > "$APP_DIR/app.pid"
-            echo "🆔 New PID: $(cat "$APP_DIR/app.pid")"
+            echo $! > app.pid
+            echo "🆔 New PID: $(cat app.pid)"
 
+            # Quick peek
             sleep 2
-            echo "📋 Recent logs:"
-            tail -n 120 "$APP_DIR/app.log" || true
-
-            echo "✅ Deploy script finished"
+            tail -n 100 app.log || true
