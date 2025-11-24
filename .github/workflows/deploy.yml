@@ -64,41 +64,70 @@ jobs:
           script_stop: false
           script: |
             set -u
-      
+
             APP_DIR=/home/ec2-user/app
             cd "$APP_DIR"
-      
-            # Find the uploaded JAR (scp placed it directly in APP_DIR)
-            LATEST_JAR="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | head -n1 || true)"
+
+            # Find the freshly uploaded artifact (exclude app.jar itself)
+            LATEST_JAR="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | grep -vE '/app\.jar$' | head -n1 || true)"
             if [[ -z "${LATEST_JAR:-}" ]]; then
-              echo "❌ No JAR found in $APP_DIR after scp"
+              echo "❌ No newly uploaded JAR found in $APP_DIR"
               exit 1
             fi
-            echo "📦 Found JAR: $LATEST_JAR"
-      
-            # Copy via temp name to avoid self-copy non-zero exit
+            echo "📦 Found uploaded JAR: $LATEST_JAR"
+
+            # Stop existing app by PID file first, then broad pkill as fallback
+            if [[ -f app.pid ]]; then
+              OLD_PID="$(cat app.pid || true)"
+              if [[ -n "${OLD_PID:-}" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
+                echo "🛑 Stopping existing PID $OLD_PID"
+                kill "$OLD_PID" || true
+              fi
+            fi
+            # Fallback: match both absolute and relative jar invocations
+            pkill -f "java .*app\.jar" || true
+
+            # Wait until port 8080 is free (max ~30s)
+            for i in {1..30}; do
+              if ss -ltn '( sport = :8080 )' | grep -q 8080; then
+                sleep 1
+              else
+                break
+              fi
+            done
+            if ss -ltn '( sport = :8080 )' | grep -q 8080; then
+              echo "❌ Port 8080 still busy; aborting deploy"
+              exit 1
+            fi
+
+            # Stage the new jar into place safely
             cp -f "$LATEST_JAR" "$APP_DIR/app-new.jar"
             mv -f "$APP_DIR/app-new.jar" "$APP_DIR/app.jar"
-            echo "✅ JAR staged to app.jar"
-      
-            # Stop existing app if running (ignore if not found)
-            pkill -f "java -jar $APP_DIR/app.jar" || true
-            sleep 3
-      
-            # Start app with secrets as Spring properties
+            echo "✅ app.jar replaced"
+
+            # Start app with secrets as Spring properties and record PID
             echo "🚀 Starting Spring Boot..."
-            nohup java -jar app.jar \
+            nohup java -jar "$APP_DIR/app.jar" \
               --spring.datasource.password="${SPRING_DATASOURCE_PASSWORD}" \
               --supabase.s3.access-key="${SUPABASE_S3_ACCESS_KEY}" \
               --supabase.s3.secret-key="${SUPABASE_S3_SECRET_KEY}" \
               --jwt.secret="${JWT_SECRET}" \
               --server.port=8080 \
-              > app.log 2>&1 &
-      
-            # Brief wait and show recent logs (don’t fail step on log issues)
-            sleep 2
-            echo "📋 Recent logs:"
-            tail -n 80 app.log || true
-      
-            echo "✅ Deploy script finished"
-      
+              > "$APP_DIR/app.log" 2>&1 &
+
+            echo $! > "$APP_DIR/app.pid"
+            echo "🆔 New PID: $(cat "$APP_DIR/app.pid")"
+
+            # Give it a moment, then quick readiness check
+            for i in {1..60}; do
+              if curl -fsS http://127.0.0.1:8080/actuator/health >/dev/null 2>&1; then
+                echo "✅ App healthy"
+                tail -n 80 "$APP_DIR/app.log" || true
+                exit 0
+              fi
+              sleep 1
+            done
+
+            echo "❌ App failed to report healthy within 60s"
+            tail -n 200 "$APP_DIR/app.log" || true
+            exit 1
