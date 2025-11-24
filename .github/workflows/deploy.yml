@@ -3,10 +3,6 @@ name: Deploy Spring Boot Backend to EC2
 on:
   push:
     branches: [ main ]
-  # (Optional) uncomment if you only want backend changes to trigger
-  #   paths:
-  #     - 'backend/**'
-  #     - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 jobs:
@@ -24,6 +20,7 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
+      # Build inside backend/, JAR -> backend/target/
       - name: Build JAR
         working-directory: backend
         run: mvn clean package -DskipTests
@@ -39,6 +36,7 @@ jobs:
             mkdir -p /home/ec2-user/app
             chmod 755 /home/ec2-user/app
 
+      # Copy built JAR to /home/ec2-user/app/
       - name: Copy JAR to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -49,7 +47,7 @@ jobs:
           target: "/home/ec2-user/app/"
           overwrite: true
 
-      - name: Deploy and Restart Application
+      - name: Deploy and Restart Application (with app.jar fallback)
         uses: appleboy/ssh-action@v0.1.10
         env:
           SPRING_DATASOURCE_PASSWORD: ${{ secrets.SPRING_DATASOURCE_PASSWORD }}
@@ -71,21 +69,22 @@ jobs:
             echo "📂 JARs in $APP_DIR:"
             ls -l *.jar 2>/dev/null || true
 
-            # Show current app.jar checksum if present
             if [[ -f app.jar ]]; then
               echo "🔎 Current app.jar sha256:"
               sha256sum app.jar || true
             fi
 
-            # Pick newest uploaded JAR EXCLUDING app.jar
+            # Try to pick newest jar EXCLUDING app.jar
             UPLOADED_JAR="$(find "$APP_DIR" -maxdepth 1 -type f -name '*.jar' ! -name 'app.jar' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
+
+            # If none found, fall back to app.jar (common when Maven builds finalName=app)
             if [[ -z "${UPLOADED_JAR:-}" ]]; then
-              echo "❌ No uploaded JAR found (excluding app.jar). Did SCP upload to $APP_DIR?"
-              exit 1
+              echo "ℹ️ No uploaded JAR found excluding app.jar. Falling back to app.jar (was likely overwritten by SCP)."
+              UPLOADED_JAR="$APP_DIR/app.jar"
             fi
 
-            echo "📦 Selected uploaded JAR: $UPLOADED_JAR"
-            echo "🔎 Uploaded JAR sha256:"
+            echo "📦 Selected JAR: $UPLOADED_JAR"
+            echo "🔎 Selected JAR sha256:"
             sha256sum "$UPLOADED_JAR" || true
 
             # --- STOP OLD PROCESS ---
@@ -96,10 +95,9 @@ jobs:
                 kill "$OLD_PID" || true
               fi
             fi
-            # also kill any stray process running app.jar
             pkill -f "java .*app\.jar" || true
 
-            # Wait until :8080 is free (max ~30s), show progress
+            # Wait until :8080 is free (max ~30s)
             for i in {1..30}; do
               if ss -ltn '( sport = :8080 )' | grep -q 8080; then
                 echo "⏳ Waiting for 8080 to free ($i/30)"
@@ -113,12 +111,16 @@ jobs:
               exit 1
             fi
 
-            # --- STAGE NEW ARTIFACT ---
-            cp -f "$UPLOADED_JAR" "$APP_DIR/app-new.jar"
-            mv -f "$APP_DIR/app-new.jar" "$APP_DIR/app.jar"
-            echo "✅ Replaced app.jar with $(basename "$UPLOADED_JAR")"
-            echo "🔎 New app.jar sha256:"
-            sha256sum "$APP_DIR/app.jar" || true
+            # --- STAGE NEW ARTIFACT (skip if it's already app.jar) ---
+            if [[ "$UPLOADED_JAR" != "$APP_DIR/app.jar" ]]; then
+              cp -f "$UPLOADED_JAR" "$APP_DIR/app-new.jar"
+              mv -f "$APP_DIR/app-new.jar" "$APP_DIR/app.jar"
+              echo "✅ Replaced app.jar with $(basename "$UPLOADED_JAR")"
+              echo "🔎 New app.jar sha256:"
+              sha256sum "$APP_DIR/app.jar" || true
+            else
+              echo "↩️ Using existing app.jar (already updated by SCP)."
+            fi
 
             # --- START NEW PROCESS ---
             echo "🚀 Starting Spring Boot..."
