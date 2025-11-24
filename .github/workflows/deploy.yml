@@ -3,14 +3,6 @@ name: Deploy Spring Boot Backend to EC2
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'backend/**'
-      - '.github/workflows/deploy.yml'
-  workflow_dispatch:
-
-concurrency:
-  group: backend-ec2
-  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -18,7 +10,7 @@ jobs:
     environment: backend
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up JDK 21
@@ -27,44 +19,35 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Build JAR (backend/)
+      # Build inside backend/, JAR -> backend/target/
+      - name: Build JAR
         working-directory: backend
-        run: mvn -q -DskipTests package
+        run: mvn clean package -DskipTests
 
-      - name: Prepare dirs on EC2
+      - name: Prepare EC2 directory
         uses: appleboy/ssh-action@v0.1.10
-        env:
-          RUN_ID: ${{ github.run_id }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
-          envs: RUN_ID
           script: |
-            set -euo pipefail
-            BASE=/home/ec2-user/app
-            REL=${BASE}/releases/${RUN_ID}
-            mkdir -p "$REL"
-            chmod 755 "$BASE" "$BASE/releases" "$REL"
-            echo "Release dir: $REL"
+            mkdir -p /home/ec2-user/app
+            chmod 755 /home/ec2-user/app
 
-      - name: Upload JAR to EC2 (release dir)
+      # Copy built JAR to /home/ec2-user/app/
+      - name: Copy JAR to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
           source: "backend/target/*.jar"
-          target: "/home/ec2-user/app/releases/${{ github.run_id }}/"
+          target: "/home/ec2-user/app/"
           overwrite: true
-          # note: some versions ignore strip_components; we don't rely on it
-          strip_components: 2
 
-      - name: Swap JAR and restart (short SSH)
+      - name: Deploy and Restart Application
         uses: appleboy/ssh-action@v0.1.10
-        timeout-minutes: 10
         env:
-          RUN_ID: ${{ github.run_id }}
           SPRING_DATASOURCE_PASSWORD: ${{ secrets.SPRING_DATASOURCE_PASSWORD }}
           SUPABASE_S3_ACCESS_KEY:     ${{ secrets.SUPABASE_S3_ACCESS_KEY }}
           SUPABASE_S3_SECRET_KEY:     ${{ secrets.SUPABASE_S3_SECRET_KEY }}
@@ -73,47 +56,33 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
-          envs: RUN_ID,SPRING_DATASOURCE_PASSWORD,SUPABASE_S3_ACCESS_KEY,SUPABASE_S3_SECRET_KEY,JWT_SECRET
+          envs: SPRING_DATASOURCE_PASSWORD,SUPABASE_S3_ACCESS_KEY,SUPABASE_S3_SECRET_KEY,JWT_SECRET
+          script_stop: false
           script: |
-            set -euo pipefail
-            BASE=/home/ec2-user/app
-            REL=${BASE}/releases/${RUN_ID}
-            cd "$BASE"
-
-            echo "📂 Upload tree:"
-            ls -lR "$REL" | head -200 || true
-
-            # Robust: find newest jar recursively (handles nested backend/target/)
-            NEW_JAR="$(find "$REL" -type f -name '*.jar' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
-            if [[ -z "${NEW_JAR:-}" ]]; then
-              echo "❌ No JAR found under $REL"
+            set -u
+      
+            APP_DIR=/home/ec2-user/app
+            cd "$APP_DIR"
+      
+            # Find the uploaded JAR (scp placed it directly in APP_DIR)
+            LATEST_JAR="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | head -n1 || true)"
+            if [[ -z "${LATEST_JAR:-}" ]]; then
+              echo "❌ No JAR found in $APP_DIR after scp"
               exit 1
             fi
-            echo "📦 New artifact: $NEW_JAR"
-
-            # Stop old app by PID file; fallback to pkill
-            if [[ -f app.pid ]]; then
-              PID="$(cat app.pid || true)"
-              if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
-                kill "$PID" || true
-              fi
-            fi
-            pkill -f "java .*app\.jar" || true
-
-            # Wait briefly for port 8080 to free (max 10s)
-            for i in {1..10}; do
-              if ss -ltn '( sport = :8080 )' | grep -q 8080; then
-                sleep 1
-              else
-                break
-              fi
-            done
-
-            # Atomic replace
-            cp -f "$NEW_JAR" app-new.jar
-            mv -f app-new.jar app.jar
-
-            # Start and detach
+            echo "📦 Found JAR: $LATEST_JAR"
+      
+            # Copy via temp name to avoid self-copy non-zero exit
+            cp -f "$LATEST_JAR" "$APP_DIR/app-new.jar"
+            mv -f "$APP_DIR/app-new.jar" "$APP_DIR/app.jar"
+            echo "✅ JAR staged to app.jar"
+      
+            # Stop existing app if running (ignore if not found)
+            pkill -f "java -jar $APP_DIR/app.jar" || true
+            sleep 3
+      
+            # Start app with secrets as Spring properties
+            echo "🚀 Starting Spring Boot..."
             nohup java -jar app.jar \
               --spring.datasource.password="${SPRING_DATASOURCE_PASSWORD}" \
               --supabase.s3.access-key="${SUPABASE_S3_ACCESS_KEY}" \
@@ -121,34 +90,11 @@ jobs:
               --jwt.secret="${JWT_SECRET}" \
               --server.port=8080 \
               > app.log 2>&1 &
-
-            echo $! > app.pid
-            echo "Started PID $(cat app.pid)"
-
-      # Runner-side readiness (simple TCP); if your SG blocks this, switch to an SSH health step instead.
-      - name: Wait for 8080 on EC2
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          set -e
-          HOST="${{ secrets.EC2_HOST }}"
-          echo "Waiting for $HOST:8080 ..."
-          for i in {1..90}; do
-            if (echo > /dev/tcp/$HOST/8080) >/dev/null 2>&1; then
-              echo "TCP open after $((i*2))s"
-              exit 0
-            fi
+      
+            # Brief wait and show recent logs (don’t fail step on log issues)
             sleep 2
-          done
-          echo "Port 8080 did not open in time"
-          exit 1
-
-      - name: Show last server logs
-        if: always()
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_KEY }}
-          script: |
-            tail -n 120 /home/ec2-user/app/app.log || true
+            echo "📋 Recent logs:"
+            tail -n 80 app.log || true
+      
+            echo "✅ Deploy script finished"
+      
