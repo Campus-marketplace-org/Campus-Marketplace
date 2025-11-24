@@ -67,19 +67,19 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
-          # Give the remote command enough time before the action SIGTERMs it
           command_timeout: 300s
           script_stop: true
           script: |
             set -euo pipefail
-            APP_DIR=/home/ec2-user/app
-            INCOMING="$APP_DIR/incoming"    # <- scp target from the prior step
+      
+            APP_DIR=/home/***/app
+            INCOMING="$APP_DIR/incoming"
             cd "$APP_DIR"
       
-            echo "[1/7] Incoming jars:"
+            echo "[1/8] Incoming jars:"
             ls -lR "$INCOMING" || true
       
-            echo "[2/7] Select newest jar from incoming"
+            echo "[2/8] Select newest jar from incoming"
             NEW_JAR="$(find "$INCOMING" -type f -name '*.jar' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
             if [[ -z "${NEW_JAR:-}" ]]; then
               echo "❌ No jar found in $INCOMING"; exit 1
@@ -90,7 +90,7 @@ jobs:
             echo "NEW_SHA=$NEW_SHA"
             echo "CUR_SHA=$CUR_SHA"
       
-            echo "[3/7] Stop existing process cleanly"
+            echo "[3/8] Stop existing process (pid file, then patterns)"
             if [[ -f app.pid ]]; then
               PID="$(cat app.pid || true)"
               if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
@@ -99,13 +99,43 @@ jobs:
               fi
             fi
       
-            # Fallback: kill exactly the jar process; -x = exact match, avoids false positives
-            # Also print what we’re about to kill for visibility.
             echo "Processes matching app.jar before kill:"
-            pgrep -af 'java -jar app.jar' || true
-            pkill -f -x 'java -jar app.jar' || true
+            pgrep -af 'java' | grep -E 'app\.jar|8080' || true
       
-            echo "[4/7] Wait for :8080 to free (max 30s)"
+            # Kill both exact and fuzzy patterns (older runs may use absolute path)
+            pkill -f -x 'java -jar app.jar' || true
+            pkill -f 'java .*app\.jar' || true
+      
+            echo "[4/8] If 8080 still busy, find owning PID and kill it"
+            show_8080 () { ss -lptn '( sport = :8080 )' || true; }
+            for i in {1..10}; do
+              if show_8080 | grep -q 8080; then
+                # Try to extract PID from ss
+                PID_BY_SS="$(show_8080 | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' | head -n1 || true)"
+                if [[ -n "${PID_BY_SS:-}" ]]; then
+                  echo "Killing PID from ss: $PID_BY_SS"
+                  kill "$PID_BY_SS" || true
+                fi
+                # Try lsof if present
+                if command -v lsof >/dev/null 2>&1; then
+                  LSOF_PID="$(lsof -t -i:8080 -sTCP:LISTEN 2>/dev/null | head -n1 || true)"
+                  if [[ -n "${LSOF_PID:-}" ]]; then
+                    echo "Killing PID from lsof: $LSOF_PID"
+                    kill "$LSOF_PID" || true
+                  fi
+                fi
+                # Try fuser as last resort
+                if command -v fuser >/dev/null 2>&1; then
+                  echo "Killing via fuser 8080/tcp"
+                  fuser -kn tcp 8080 || true
+                fi
+                sleep 1
+              else
+                break
+              fi
+            done
+      
+            echo "[5/8] Wait up to 30s for :8080 to free"
             for i in {1..30}; do
               if ss -ltn '( sport = :8080 )' | grep -q 8080; then
                 echo "waiting... $i"
@@ -115,20 +145,21 @@ jobs:
               fi
             done
             if ss -ltn '( sport = :8080 )' | grep -q 8080; then
-              echo "❌ Port 8080 still busy"; exit 1
+              echo "❌ Port 8080 still busy; diagnostics:"
+              show_8080
+              pgrep -af 'java' || true
+              exit 1
             fi
       
-            echo "[5/7] Swap jar atomically"
+            echo "[6/8] Swap jar atomically"
             cp -f "$NEW_JAR" app-new.jar
             mv -f app-new.jar app.jar
             echo "app.jar sha256 now: $(sha256sum app.jar | awk '{print $1}')"
-      
             if [[ "$(sha256sum app.jar | awk '{print $1}')" != "$NEW_SHA" ]]; then
               echo "❌ Checksum mismatch after copy"; exit 1
             fi
       
-            echo "[6/7] Start app"
-            # Note the exact command line; matches our pkill -x pattern
+            echo "[7/8] Start app"
             nohup java -jar app.jar \
               --spring.datasource.password="${SPRING_DATASOURCE_PASSWORD}" \
               --supabase.s3.access-key="${SUPABASE_S3_ACCESS_KEY}" \
@@ -140,8 +171,8 @@ jobs:
             echo $! > app.pid
             echo "New PID: $(cat app.pid)"
       
-            echo "[7/7] Quick peek at logs:"
+            echo "[8/8] Quick logs:"
             sleep 2
             tail -n 120 app.log || true
-
+      
 
