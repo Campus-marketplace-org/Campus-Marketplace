@@ -23,7 +23,7 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      # Build inside backend/, JAR -> backend/target/
+      # Build inside backend/, so artifact lands in backend/target/
       - name: Build JAR
         working-directory: backend
         run: mvn clean package -DskipTests
@@ -38,7 +38,6 @@ jobs:
             mkdir -p /home/ec2-user/app
             chmod 755 /home/ec2-user/app
 
-      # Copy built JAR to /home/ec2-user/app/
       - name: Copy JAR to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -68,15 +67,18 @@ jobs:
             APP_DIR=/home/ec2-user/app
             cd "$APP_DIR"
 
-            # Find the freshly uploaded artifact (exclude app.jar itself)
-            LATEST_JAR="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | grep -vE '/app\.jar$' | head -n1 || true)"
-            if [[ -z "${LATEST_JAR:-}" ]]; then
-              echo "❌ No newly uploaded JAR found in $APP_DIR"
+            echo "📂 Listing JARs in $APP_DIR:"
+            ls -l "$APP_DIR"/*.jar 2>/dev/null || echo "(no jars yet)"
+
+            # Pick the most recent JAR (includes app.jar if that’s the freshest)
+            UPLOADED_JAR="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | head -n1 || true)"
+            if [[ -z "${UPLOADED_JAR:-}" ]]; then
+              echo "❌ No JAR found in $APP_DIR (after scp)."
               exit 1
             fi
-            echo "📦 Found uploaded JAR: $LATEST_JAR"
+            echo "📦 Selected JAR: $UPLOADED_JAR"
 
-            # Stop existing app by PID file first, then broad pkill as fallback
+            # Stop existing app (PID file first, then fallback pkill)
             if [[ -f app.pid ]]; then
               OLD_PID="$(cat app.pid || true)"
               if [[ -n "${OLD_PID:-}" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
@@ -84,7 +86,6 @@ jobs:
                 kill "$OLD_PID" || true
               fi
             fi
-            # Fallback: match both absolute and relative jar invocations
             pkill -f "java .*app\.jar" || true
 
             # Wait until port 8080 is free (max ~30s)
@@ -100,10 +101,14 @@ jobs:
               exit 1
             fi
 
-            # Stage the new jar into place safely
-            cp -f "$LATEST_JAR" "$APP_DIR/app-new.jar"
-            mv -f "$APP_DIR/app-new.jar" "$APP_DIR/app.jar"
-            echo "✅ app.jar replaced"
+            # Stage into app.jar safely if needed
+            if [[ "$UPLOADED_JAR" != "$APP_DIR/app.jar" ]]; then
+              cp -f "$UPLOADED_JAR" "$APP_DIR/app-new.jar"
+              mv -f "$APP_DIR/app-new.jar" "$APP_DIR/app.jar"
+              echo "✅ app.jar replaced"
+            else
+              echo "↩️ Latest artifact already named app.jar; keeping it"
+            fi
 
             # Start app with secrets as Spring properties and record PID
             echo "🚀 Starting Spring Boot..."
@@ -118,16 +123,21 @@ jobs:
             echo $! > "$APP_DIR/app.pid"
             echo "🆔 New PID: $(cat "$APP_DIR/app.pid")"
 
-            # Give it a moment, then quick readiness check
+            # Quick readiness check: prefer actuator, fallback to port
             for i in {1..60}; do
               if curl -fsS http://127.0.0.1:8080/actuator/health >/dev/null 2>&1; then
                 echo "✅ App healthy"
                 tail -n 80 "$APP_DIR/app.log" || true
                 exit 0
               fi
+              if ss -ltn '( sport = :8080 )' | grep -q 8080; then
+                echo "✅ App listening on 8080 (no actuator)"
+                tail -n 80 "$APP_DIR/app.log" || true
+                exit 0
+              fi
               sleep 1
             done
 
-            echo "❌ App failed to report healthy within 60s"
+            echo "❌ App failed to become ready within 60s"
             tail -n 200 "$APP_DIR/app.log" || true
             exit 1
