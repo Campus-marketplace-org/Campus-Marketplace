@@ -28,26 +28,29 @@ jobs:
         working-directory: backend
         run: mvn clean package -DskipTests
 
-      - name: Prepare EC2 directory
+      # Ensure directories exist on EC2
+      - name: Prepare EC2 dirs
         uses: appleboy/ssh-action@v0.1.10
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
           script: |
-            mkdir -p /home/ec2-user/app
-            chmod 755 /home/ec2-user/app
+            mkdir -p /home/ec2-user/app/releases
+            chmod 755 /home/ec2-user/app /home/ec2-user/app/releases
 
-      - name: Copy JAR to EC2
+      # Upload the freshly built JAR to /app/releases/ (never overwrite app.jar directly)
+      - name: Upload JAR to EC2 (releases/)
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
           source: "backend/target/*.jar"
-          target: "/home/ec2-user/app/"
+          target: "/home/ec2-user/app/releases/"
           overwrite: true
 
+      # Swap in newest release and restart
       - name: Deploy and Restart Application
         uses: appleboy/ssh-action@v0.1.10
         env:
@@ -65,18 +68,19 @@ jobs:
             set -u
 
             APP_DIR=/home/ec2-user/app
+            REL_DIR=/home/ec2-user/app/releases
             cd "$APP_DIR"
 
-            echo "📂 Listing JARs in $APP_DIR:"
-            ls -l "$APP_DIR"/*.jar 2>/dev/null || echo "(no jars yet)"
+            echo "📂 Contents of $REL_DIR:"
+            ls -l "$REL_DIR" || true
 
-            # Pick the most recent JAR (includes app.jar if that’s the freshest)
-            UPLOADED_JAR="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | head -n1 || true)"
-            if [[ -z "${UPLOADED_JAR:-}" ]]; then
-              echo "❌ No JAR found in $APP_DIR (after scp)."
+            # Pick newest uploaded jar from releases/
+            NEW_JAR="$(ls -1t "$REL_DIR"/*.jar 2>/dev/null | head -n1 || true)"
+            if [[ -z "${NEW_JAR:-}" ]]; then
+              echo "❌ No JAR found in $REL_DIR after upload."
               exit 1
             fi
-            echo "📦 Selected JAR: $UPLOADED_JAR"
+            echo "📦 New release: $NEW_JAR"
 
             # Stop existing app (PID file first, then fallback pkill)
             if [[ -f app.pid ]]; then
@@ -101,14 +105,10 @@ jobs:
               exit 1
             fi
 
-            # Stage into app.jar safely if needed
-            if [[ "$UPLOADED_JAR" != "$APP_DIR/app.jar" ]]; then
-              cp -f "$UPLOADED_JAR" "$APP_DIR/app-new.jar"
-              mv -f "$APP_DIR/app-new.jar" "$APP_DIR/app.jar"
-              echo "✅ app.jar replaced"
-            else
-              echo "↩️ Latest artifact already named app.jar; keeping it"
-            fi
+            # Atomically replace app.jar with the new release
+            cp -f "$NEW_JAR" app-new.jar
+            mv -f app-new.jar app.jar
+            echo "✅ app.jar updated from: $NEW_JAR"
 
             # Start app with secrets as Spring properties and record PID
             echo "🚀 Starting Spring Boot..."
@@ -123,7 +123,7 @@ jobs:
             echo $! > "$APP_DIR/app.pid"
             echo "🆔 New PID: $(cat "$APP_DIR/app.pid")"
 
-            # Quick readiness check: prefer actuator, fallback to port
+            # Readiness: prefer actuator, fallback to port-open check
             for i in {1..60}; do
               if curl -fsS http://127.0.0.1:8080/actuator/health >/dev/null 2>&1; then
                 echo "✅ App healthy"
@@ -134,10 +134,3 @@ jobs:
                 echo "✅ App listening on 8080 (no actuator)"
                 tail -n 80 "$APP_DIR/app.log" || true
                 exit 0
-              fi
-              sleep 1
-            done
-
-            echo "❌ App failed to become ready within 60s"
-            tail -n 200 "$APP_DIR/app.log" || true
-            exit 1
