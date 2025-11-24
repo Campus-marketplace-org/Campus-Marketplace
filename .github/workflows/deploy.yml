@@ -60,28 +60,31 @@ jobs:
           script_stop: false
           script: |
             set -u
-
+            
             APP_DIR=/home/ec2-user/app
             cd "$APP_DIR"
             
-            echo "📂 JARs in $APP_DIR (newest first):"
-            ls -lt *.jar 2>/dev/null || true
+            echo "📂 JARs in $APP_DIR:"
+            ls -l *.jar 2>/dev/null || true
             
-            # Select the most recently uploaded JAR (likely the SNAPSHOT file)
-            LATEST_JAR="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | head -n1 || true)"
-            if [[ -z "${LATEST_JAR:-}" ]]; then
-              echo "❌ No JAR found in $APP_DIR after scp"
+            # Current running artifact checksum (if present)
+            if [[ -f app.jar ]]; then
+              echo "🔎 Current app.jar sha256:"
+              sha256sum app.jar || true
+            fi
+            
+            # Pick newest uploaded jar EXCLUDING app.jar
+            UPLOADED_JAR="$(find "$APP_DIR" -maxdepth 1 -type f -name '*.jar' ! -name 'app.jar' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
+            
+            if [[ -z "${UPLOADED_JAR:-}" ]]; then
+              echo "❌ No uploaded JAR found (excluding app.jar). Did the SCP step upload to $APP_DIR?"
               exit 1
             fi
-            echo "📦 Found uploaded JAR: $LATEST_JAR"
-            
-            # Stage it safely to app.jar
-            cp -f "$LATEST_JAR" "$APP_DIR/app-new.jar"
-            mv -f "$APP_DIR/app-new.jar" "$APP_DIR/app.jar"
-            echo "✅ Staged to app.jar"
+            echo "📦 Selected uploaded JAR: $UPLOADED_JAR"
+            echo "🔎 Uploaded JAR sha256:"
+            sha256sum "$UPLOADED_JAR" || true
             
             # --- STOP OLD PROCESS RELIABLY ---
-            # Prefer PID file if present
             if [[ -f "$APP_DIR/app.pid" ]]; then
               OLD_PID="$(cat "$APP_DIR/app.pid" || true)"
               if [[ -n "${OLD_PID:-}" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
@@ -89,7 +92,7 @@ jobs:
                 kill "$OLD_PID" || true
               fi
             fi
-            # Fallback: match both absolute/relative jar invocations
+            # Fallback: catch both absolute/relative invocations
             pkill -f "java .*app\.jar" || true
             
             # Wait until :8080 is free (max ~30s)
@@ -106,6 +109,13 @@ jobs:
               exit 1
             fi
             
+            # --- STAGE NEW ARTIFACT ---
+            cp -f "$UPLOADED_JAR" "$APP_DIR/app-new.jar"
+            mv -f "$APP_DIR/app-new.jar" "$APP_DIR/app.jar"
+            echo "✅ Staged to app.jar"
+            echo "🔎 New app.jar sha256:"
+            sha256sum "$APP_DIR/app.jar" || true
+            
             # --- START NEW PROCESS ---
             echo "🚀 Starting Spring Boot..."
             nohup java -jar app.jar \
@@ -119,8 +129,8 @@ jobs:
             echo $! > "$APP_DIR/app.pid"
             echo "🆔 New PID: $(cat "$APP_DIR/app.pid")"
             
-            # Show a taste of logs so GitHub shows what booted
             sleep 2
-            tail -n 100 "$APP_DIR/app.log" || true
+            echo "📋 Recent logs:"
+            tail -n 120 "$APP_DIR/app.log" || true
             
             echo "✅ Deploy script finished"
