@@ -72,70 +72,52 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
           envs: SPRING_DATASOURCE_PASSWORD,SUPABASE_S3_ACCESS_KEY,SUPABASE_S3_SECRET_KEY,JWT_SECRET
-          command_timeout: 15m
+          command_timeout: 20m
           script: |
             set -euo pipefail
+            set -x
+
             APP_DIR=/home/ec2-user/app
             INCOMING="$APP_DIR/incoming"
-
             cd "$APP_DIR"
 
-            echo "📂 Incoming contents:"
-            ls -l "$INCOMING" || true
+            echo "[1/6] List incoming jars"
+            ls -lR "$INCOMING" || true
 
-            # Pick newest JAR from incoming (recursively, in case plugin creates subdirs)
+            echo "[2/6] Select newest jar"
             NEW_JAR="$(find "$INCOMING" -type f -name '*.jar' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
-            if [[ -z "${NEW_JAR:-}" ]]; then
-              echo "❌ No JAR in $INCOMING"
-              exit 1
-            fi
-
-            echo "📦 New artifact: $NEW_JAR"
+            [[ -n "${NEW_JAR:-}" ]] || { echo "No jar found in $INCOMING"; exit 1; }
             NEW_SHA="$(sha256sum "$NEW_JAR" | awk '{print $1}')"
-            echo "🔎 New sha256: $NEW_SHA"
-
             CUR_SHA="(none)"
-            if [[ -f app.jar ]]; then
-              CUR_SHA="$(sha256sum app.jar | awk '{print $1}')"
-              echo "🔎 Current app.jar sha256: $CUR_SHA"
-            fi
+            [[ -f app.jar ]] && CUR_SHA="$(sha256sum app.jar | awk '{print $1}')"
+            echo "NEW_SHA=$NEW_SHA CUR_SHA=$CUR_SHA"
 
-            if [[ -f app.jar && "$NEW_SHA" = "$CUR_SHA" ]]; then
-              echo "ℹ️ Artifact content unchanged. Restarting anyway to be safe."
-            fi
-
-            # Stop existing process via PID, then fallback
+            echo "[3/6] Stop old process"
             if [[ -f app.pid ]]; then
               PID="$(cat app.pid || true)"
               if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
-                echo "🛑 Stopping PID $PID"
                 kill "$PID" || true
               fi
             fi
             pkill -f "java .*app\.jar" || true
 
-            # Wait for port 8080 to free (max 30s)
+            echo "[4/6] Wait for :8080 to free"
             for i in {1..30}; do
               if ss -ltn '( sport = :8080 )' | grep -q 8080; then
-                echo "⏳ Waiting for 8080 to free ($i/30)"
+                echo "waiting... $i"
                 sleep 1
               else
                 break
               fi
             done
-            if ss -ltn '( sport = :8080 )' | grep -q 8080; then
-              echo "❌ Port 8080 still busy; aborting deploy"
-              exit 1
-            fi
+            ! ss -ltn '( sport = :8080 )' | grep -q 8080 || { echo "Port 8080 busy"; exit 1; }
 
-            # Replace app.jar atomically
+            echo "[5/6] Swap jar atomically"
             cp -f "$NEW_JAR" app-new.jar
             mv -f app-new.jar app.jar
-            echo "✅ app.jar updated"
-            echo "🔎 app.jar sha256 now: $(sha256sum app.jar | awk '{print $1}')"
+            sha256sum app.jar || true
 
-            # Start app
-            echo "🚀 Starting Spring Boot..."
+            echo "[6/6] Start app"
             nohup java -jar app.jar \
               --spring.datasource.password="${SPRING_DATASOURCE_PASSWORD}" \
               --supabase.s3.access-key="${SUPABASE_S3_ACCESS_KEY}" \
@@ -145,8 +127,6 @@ jobs:
               > app.log 2>&1 &
 
             echo $! > app.pid
-            echo "🆔 New PID: $(cat app.pid)"
-
-            # Quick peek
             sleep 2
-            tail -n 100 app.log || true
+            tail -n 120 app.log || true
+
