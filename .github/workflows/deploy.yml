@@ -60,28 +60,53 @@ jobs:
           script_stop: false
           script: |
             set -u
-      
+
             APP_DIR=/home/ec2-user/app
             cd "$APP_DIR"
-      
-            # Find the uploaded JAR (scp placed it directly in APP_DIR)
+            
+            echo "📂 JARs in $APP_DIR (newest first):"
+            ls -lt *.jar 2>/dev/null || true
+            
+            # Select the most recently uploaded JAR (likely the SNAPSHOT file)
             LATEST_JAR="$(ls -1t "$APP_DIR"/*.jar 2>/dev/null | head -n1 || true)"
             if [[ -z "${LATEST_JAR:-}" ]]; then
               echo "❌ No JAR found in $APP_DIR after scp"
               exit 1
             fi
-            echo "📦 Found JAR: $LATEST_JAR"
-      
-            # Copy via temp name to avoid self-copy non-zero exit
+            echo "📦 Found uploaded JAR: $LATEST_JAR"
+            
+            # Stage it safely to app.jar
             cp -f "$LATEST_JAR" "$APP_DIR/app-new.jar"
             mv -f "$APP_DIR/app-new.jar" "$APP_DIR/app.jar"
-            echo "✅ JAR staged to app.jar"
-      
-            # Stop existing app if running (ignore if not found)
-            pkill -f "java -jar $APP_DIR/app.jar" || true
-            sleep 3
-      
-            # Start app with secrets as Spring properties
+            echo "✅ Staged to app.jar"
+            
+            # --- STOP OLD PROCESS RELIABLY ---
+            # Prefer PID file if present
+            if [[ -f "$APP_DIR/app.pid" ]]; then
+              OLD_PID="$(cat "$APP_DIR/app.pid" || true)"
+              if [[ -n "${OLD_PID:-}" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
+                echo "🛑 Stopping existing PID $OLD_PID"
+                kill "$OLD_PID" || true
+              fi
+            fi
+            # Fallback: match both absolute/relative jar invocations
+            pkill -f "java .*app\.jar" || true
+            
+            # Wait until :8080 is free (max ~30s)
+            for i in {1..30}; do
+              if ss -ltn '( sport = :8080 )' | grep -q 8080; then
+                echo "⏳ Waiting for 8080 to free ($i/30)"
+                sleep 1
+              else
+                break
+              fi
+            done
+            if ss -ltn '( sport = :8080 )' | grep -q 8080; then
+              echo "❌ Port 8080 still busy; aborting deploy"
+              exit 1
+            fi
+            
+            # --- START NEW PROCESS ---
             echo "🚀 Starting Spring Boot..."
             nohup java -jar app.jar \
               --spring.datasource.password="${SPRING_DATASOURCE_PASSWORD}" \
@@ -89,12 +114,13 @@ jobs:
               --supabase.s3.secret-key="${SUPABASE_S3_SECRET_KEY}" \
               --jwt.secret="${JWT_SECRET}" \
               --server.port=8080 \
-              > app.log 2>&1 &
-      
-            # Brief wait and show recent logs (don’t fail step on log issues)
+              > "$APP_DIR/app.log" 2>&1 &
+            
+            echo $! > "$APP_DIR/app.pid"
+            echo "🆔 New PID: $(cat "$APP_DIR/app.pid")"
+            
+            # Show a taste of logs so GitHub shows what booted
             sleep 2
-            echo "📋 Recent logs:"
-            tail -n 80 app.log || true
-      
+            tail -n 100 "$APP_DIR/app.log" || true
+            
             echo "✅ Deploy script finished"
-      
