@@ -3,6 +3,11 @@ name: Deploy Spring Boot Backend to EC2
 on:
   push:
     branches: [ main ]
+  # (Optional) uncomment if you only want backend changes to trigger
+  #   paths:
+  #     - 'backend/**'
+  #     - '.github/workflows/deploy.yml'
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -19,7 +24,6 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      # Build inside backend/, JAR -> backend/target/
       - name: Build JAR
         working-directory: backend
         run: mvn clean package -DskipTests
@@ -31,10 +35,10 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
           script: |
+            set -euo pipefail
             mkdir -p /home/ec2-user/app
             chmod 755 /home/ec2-user/app
 
-      # Copy built JAR to /home/ec2-user/app/
       - name: Copy JAR to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -59,32 +63,32 @@ jobs:
           envs: SPRING_DATASOURCE_PASSWORD,SUPABASE_S3_ACCESS_KEY,SUPABASE_S3_SECRET_KEY,JWT_SECRET
           script_stop: false
           script: |
-            set -u
-            
+            set -euo pipefail
+
             APP_DIR=/home/ec2-user/app
             cd "$APP_DIR"
-            
+
             echo "📂 JARs in $APP_DIR:"
             ls -l *.jar 2>/dev/null || true
-            
-            # Current running artifact checksum (if present)
+
+            # Show current app.jar checksum if present
             if [[ -f app.jar ]]; then
               echo "🔎 Current app.jar sha256:"
               sha256sum app.jar || true
             fi
-            
-            # Pick newest uploaded jar EXCLUDING app.jar
+
+            # Pick newest uploaded JAR EXCLUDING app.jar
             UPLOADED_JAR="$(find "$APP_DIR" -maxdepth 1 -type f -name '*.jar' ! -name 'app.jar' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
-            
             if [[ -z "${UPLOADED_JAR:-}" ]]; then
-              echo "❌ No uploaded JAR found (excluding app.jar). Did the SCP step upload to $APP_DIR?"
+              echo "❌ No uploaded JAR found (excluding app.jar). Did SCP upload to $APP_DIR?"
               exit 1
             fi
+
             echo "📦 Selected uploaded JAR: $UPLOADED_JAR"
             echo "🔎 Uploaded JAR sha256:"
             sha256sum "$UPLOADED_JAR" || true
-            
-            # --- STOP OLD PROCESS RELIABLY ---
+
+            # --- STOP OLD PROCESS ---
             if [[ -f "$APP_DIR/app.pid" ]]; then
               OLD_PID="$(cat "$APP_DIR/app.pid" || true)"
               if [[ -n "${OLD_PID:-}" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
@@ -92,10 +96,10 @@ jobs:
                 kill "$OLD_PID" || true
               fi
             fi
-            # Fallback: catch both absolute/relative invocations
+            # also kill any stray process running app.jar
             pkill -f "java .*app\.jar" || true
-            
-            # Wait until :8080 is free (max ~30s)
+
+            # Wait until :8080 is free (max ~30s), show progress
             for i in {1..30}; do
               if ss -ltn '( sport = :8080 )' | grep -q 8080; then
                 echo "⏳ Waiting for 8080 to free ($i/30)"
@@ -108,14 +112,14 @@ jobs:
               echo "❌ Port 8080 still busy; aborting deploy"
               exit 1
             fi
-            
+
             # --- STAGE NEW ARTIFACT ---
             cp -f "$UPLOADED_JAR" "$APP_DIR/app-new.jar"
             mv -f "$APP_DIR/app-new.jar" "$APP_DIR/app.jar"
-            echo "✅ Staged to app.jar"
+            echo "✅ Replaced app.jar with $(basename "$UPLOADED_JAR")"
             echo "🔎 New app.jar sha256:"
             sha256sum "$APP_DIR/app.jar" || true
-            
+
             # --- START NEW PROCESS ---
             echo "🚀 Starting Spring Boot..."
             nohup java -jar app.jar \
@@ -125,12 +129,12 @@ jobs:
               --jwt.secret="${JWT_SECRET}" \
               --server.port=8080 \
               > "$APP_DIR/app.log" 2>&1 &
-            
+
             echo $! > "$APP_DIR/app.pid"
             echo "🆔 New PID: $(cat "$APP_DIR/app.pid")"
-            
+
             sleep 2
             echo "📋 Recent logs:"
             tail -n 120 "$APP_DIR/app.log" || true
-            
+
             echo "✅ Deploy script finished"
