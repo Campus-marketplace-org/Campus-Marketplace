@@ -51,9 +51,10 @@ jobs:
           overwrite: true
           # (Don't rely on strip_components; we'll search recursively on the instance)
 
-      # Swap newest upload into app.jar and restart
+
       - name: Deploy and Restart Application
         uses: appleboy/ssh-action@v0.1.10
+        timeout-minutes: 30                  # GitHub step-level timeout
         env:
           SPRING_DATASOURCE_PASSWORD: ${{ secrets.SPRING_DATASOURCE_PASSWORD }}
           SUPABASE_S3_ACCESS_KEY:     ${{ secrets.SUPABASE_S3_ACCESS_KEY }}
@@ -65,6 +66,9 @@ jobs:
           key: ${{ secrets.EC2_KEY }}
           envs: SPRING_DATASOURCE_PASSWORD,SUPABASE_S3_ACCESS_KEY,SUPABASE_S3_SECRET_KEY,JWT_SECRET
           script_stop: false
+          timeout: 60s                       # ssh connect timeout (action input)
+          command_timeout: 30m               # remote command timeout (action input)
+          debug: true
           script: |
             set -u
 
@@ -72,10 +76,14 @@ jobs:
             REL_DIR=/home/ec2-user/app/releases/upload
             cd "$APP_DIR"
 
-            echo "📂 Upload tree:"
-            ls -lR "$REL_DIR" || true
+            echo "==== DEPLOY START $(date -u) ===="
 
-            # Pick newest JAR recursively (handles nested backend/target paths)
+            echo "📂 Upload tree (top):"
+            ls -l "$REL_DIR" || true
+            echo "📂 Upload tree (recursive):"
+            ls -lR "$REL_DIR" | head -200 || true
+
+            # Newest JAR recursively
             NEW_JAR="$(find "$REL_DIR" -type f -name '*.jar' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
             if [[ -z "${NEW_JAR:-}" ]]; then
               echo "❌ No JAR found anywhere under $REL_DIR"
@@ -83,7 +91,7 @@ jobs:
             fi
             echo "📦 New release: $NEW_JAR"
 
-            # Stop existing app (PID file first, then fallback pkill)
+            # Stop existing by PID then fallback
             if [[ -f app.pid ]]; then
               OLD_PID="$(cat app.pid || true)"
               if [[ -n "${OLD_PID:-}" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
@@ -93,9 +101,10 @@ jobs:
             fi
             pkill -f "java .*app\.jar" || true
 
-            # Wait until port 8080 is free (max ~30s)
+            # Wait for port 8080 to clear
             for i in {1..30}; do
               if ss -ltn '( sport = :8080 )' | grep -q 8080; then
+                echo "⏳ Waiting for :8080 to free ($i/30)"
                 sleep 1
               else
                 break
@@ -106,12 +115,12 @@ jobs:
               exit 1
             fi
 
-            # Atomically replace app.jar with the new release
+            # Atomic replace
             cp -f "$NEW_JAR" app-new.jar
             mv -f app-new.jar app.jar
-            echo "✅ app.jar updated from: $NEW_JAR"
+            echo "✅ app.jar updated"
 
-            # Start app with secrets as Spring properties and record PID
+            # Start and record PID
             echo "🚀 Starting Spring Boot..."
             nohup java -jar "$APP_DIR/app.jar" \
               --spring.datasource.password="${SPRING_DATASOURCE_PASSWORD}" \
@@ -120,20 +129,21 @@ jobs:
               --jwt.secret="${JWT_SECRET}" \
               --server.port=8080 \
               > "$APP_DIR/app.log" 2>&1 &
-
             echo $! > "$APP_DIR/app.pid"
             echo "🆔 New PID: $(cat "$APP_DIR/app.pid")"
 
-            # Readiness: prefer actuator, fallback to port-open check
+            # Readiness (actuator preferred)
             for i in {1..60}; do
               if curl -fsS http://127.0.0.1:8080/actuator/health >/dev/null 2>&1; then
-                echo "✅ App healthy"
+                echo "✅ App healthy after $i s"
                 tail -n 80 "$APP_DIR/app.log" || true
+                echo "==== DEPLOY END $(date -u) ===="
                 exit 0
               fi
               if ss -ltn '( sport = :8080 )' | grep -q 8080; then
-                echo "✅ App listening on 8080 (no actuator)"
+                echo "✅ App listening on 8080 (no actuator) after $i s"
                 tail -n 80 "$APP_DIR/app.log" || true
+                echo "==== DEPLOY END $(date -u) ===="
                 exit 0
               fi
               sleep 1
@@ -141,4 +151,6 @@ jobs:
 
             echo "❌ App failed readiness within 60s"
             tail -n 200 "$APP_DIR/app.log" || true
+            echo "==== DEPLOY END $(date -u) ===="
             exit 1
+
