@@ -59,49 +59,53 @@ jobs:
           source: "backend/target/*.jar"
           target: "/home/ec2-user/app/incoming/"
           overwrite: true
-
+      
       - name: Deploy and Restart Application
         uses: appleboy/ssh-action@v0.1.10
-        env:
-          SPRING_DATASOURCE_PASSWORD: ${{ secrets.SPRING_DATASOURCE_PASSWORD }}
-          SUPABASE_S3_ACCESS_KEY:     ${{ secrets.SUPABASE_S3_ACCESS_KEY }}
-          SUPABASE_S3_SECRET_KEY:     ${{ secrets.SUPABASE_S3_SECRET_KEY }}
-          JWT_SECRET:                 ${{ secrets.JWT_SECRET }}
+        timeout-minutes: 10
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
-          envs: SPRING_DATASOURCE_PASSWORD,SUPABASE_S3_ACCESS_KEY,SUPABASE_S3_SECRET_KEY,JWT_SECRET
-          command_timeout: 20m
+          # Give the remote command enough time before the action SIGTERMs it
+          command_timeout: 300s
+          script_stop: true
           script: |
             set -euo pipefail
-            set -x
-
             APP_DIR=/home/ec2-user/app
-            INCOMING="$APP_DIR/incoming"
+            INCOMING="$APP_DIR/incoming"    # <- scp target from the prior step
             cd "$APP_DIR"
-
-            echo "[1/6] List incoming jars"
+      
+            echo "[1/7] Incoming jars:"
             ls -lR "$INCOMING" || true
-
-            echo "[2/6] Select newest jar"
+      
+            echo "[2/7] Select newest jar from incoming"
             NEW_JAR="$(find "$INCOMING" -type f -name '*.jar' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
-            [[ -n "${NEW_JAR:-}" ]] || { echo "No jar found in $INCOMING"; exit 1; }
+            if [[ -z "${NEW_JAR:-}" ]]; then
+              echo "❌ No jar found in $INCOMING"; exit 1
+            fi
             NEW_SHA="$(sha256sum "$NEW_JAR" | awk '{print $1}')"
-            CUR_SHA="(none)"
-            [[ -f app.jar ]] && CUR_SHA="$(sha256sum app.jar | awk '{print $1}')"
-            echo "NEW_SHA=$NEW_SHA CUR_SHA=$CUR_SHA"
-
-            echo "[3/6] Stop old process"
+            CUR_SHA="(none)"; [[ -f app.jar ]] && CUR_SHA="$(sha256sum app.jar | awk '{print $1}')"
+            echo "NEW_JAR=$NEW_JAR"
+            echo "NEW_SHA=$NEW_SHA"
+            echo "CUR_SHA=$CUR_SHA"
+      
+            echo "[3/7] Stop existing process cleanly"
             if [[ -f app.pid ]]; then
               PID="$(cat app.pid || true)"
               if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
+                echo "Stopping PID $PID"
                 kill "$PID" || true
               fi
             fi
-            pkill -f "java .*app\.jar" || true
-
-            echo "[4/6] Wait for :8080 to free"
+      
+            # Fallback: kill exactly the jar process; -x = exact match, avoids false positives
+            # Also print what we’re about to kill for visibility.
+            echo "Processes matching app.jar before kill:"
+            pgrep -af 'java -jar app.jar' || true
+            pkill -f -x 'java -jar app.jar' || true
+      
+            echo "[4/7] Wait for :8080 to free (max 30s)"
             for i in {1..30}; do
               if ss -ltn '( sport = :8080 )' | grep -q 8080; then
                 echo "waiting... $i"
@@ -110,14 +114,21 @@ jobs:
                 break
               fi
             done
-            ! ss -ltn '( sport = :8080 )' | grep -q 8080 || { echo "Port 8080 busy"; exit 1; }
-
-            echo "[5/6] Swap jar atomically"
+            if ss -ltn '( sport = :8080 )' | grep -q 8080; then
+              echo "❌ Port 8080 still busy"; exit 1
+            fi
+      
+            echo "[5/7] Swap jar atomically"
             cp -f "$NEW_JAR" app-new.jar
             mv -f app-new.jar app.jar
-            sha256sum app.jar || true
-
-            echo "[6/6] Start app"
+            echo "app.jar sha256 now: $(sha256sum app.jar | awk '{print $1}')"
+      
+            if [[ "$(sha256sum app.jar | awk '{print $1}')" != "$NEW_SHA" ]]; then
+              echo "❌ Checksum mismatch after copy"; exit 1
+            fi
+      
+            echo "[6/7] Start app"
+            # Note the exact command line; matches our pkill -x pattern
             nohup java -jar app.jar \
               --spring.datasource.password="${SPRING_DATASOURCE_PASSWORD}" \
               --supabase.s3.access-key="${SUPABASE_S3_ACCESS_KEY}" \
@@ -125,8 +136,12 @@ jobs:
               --jwt.secret="${JWT_SECRET}" \
               --server.port=8080 \
               > app.log 2>&1 &
-
+      
             echo $! > app.pid
+            echo "New PID: $(cat app.pid)"
+      
+            echo "[7/7] Quick peek at logs:"
             sleep 2
             tail -n 120 app.log || true
+
 
