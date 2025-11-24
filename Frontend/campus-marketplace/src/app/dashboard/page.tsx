@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Post } from '@/src/types/post';
 import { getAllPosts } from '@/src/lib/api/posts';
 import PostCard from '@/src/components/PostCards';
+import { CONFIG, MOCK_POSTS } from '@/src/config/mockData';
 
 export default function DashboardPage() {
   const [recentPosts, setRecentPosts] = useState<Post[]>([]);
@@ -15,11 +16,22 @@ export default function DashboardPage() {
   useEffect(() => {
     async function fetchRecentPosts() {
       try {
+        // Use placeholder data if enabled
+        if (CONFIG.USE_PLACEHOLDER_DATA) {
+          setRecentPosts(MOCK_POSTS.slice(0, 3));
+          setLoading(false);
+          return;
+        }
+
         const posts = await getAllPosts();
         // Get the 3 most recent posts
         setRecentPosts(posts.slice(0, 3));
       } catch (err) {
         console.error('Error fetching posts:', err);
+        // Fallback to placeholder data on error
+        if (CONFIG.USE_PLACEHOLDER_DATA) {
+          setRecentPosts(MOCK_POSTS.slice(0, 3));
+        }
       } finally {
         setLoading(false);
       }
@@ -29,7 +41,7 @@ export default function DashboardPage() {
   }, []);
 
   const handleViewDetails = (post: Post) => {
-    router.push(`/dashboard/listing/${post.id}`);
+    router.push(`/browse/post/${post.id}`);
   };
 
   const handleMessage = (post: Post) => {
@@ -56,7 +68,7 @@ export default function DashboardPage() {
               Create New Post
             </button>
             <button
-              onClick={() => router.push('/dashboard/listing')}
+              onClick={() => router.push('/browse')}
               className="w-full px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 transition"
             >
               Browse All Listings

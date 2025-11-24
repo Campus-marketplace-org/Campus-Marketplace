@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 // Type definitions based on backend Post entity
 import { Post } from '@/src/types/post';
+import { CONFIG, MOCK_POSTS, isSignedIn } from '@/src/config/mockData';
 
 export interface PostCardProps {
   post: Post;
@@ -37,7 +39,7 @@ export default function PostCard({ post, onViewDetails, onMessage }: PostCardPro
         {post.description}
       </p>
       <div className="text-xs text-gray-500 mb-3">
-        Posted by: {"test"}
+        Posted by: {post.Owner?.username || "Unknown"}
       </div>
       <div className="flex gap-2">
         <button
@@ -58,6 +60,7 @@ export default function PostCard({ post, onViewDetails, onMessage }: PostCardPro
 }
 
 export function PostCardList() {
+  const router = useRouter();
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +68,14 @@ export function PostCardList() {
   useEffect(() => {
     async function fetchPosts() {
       try {
-        // Fetch first 5 posts
+        // Use placeholder data if enabled, otherwise fetch from API
+        if (CONFIG.USE_PLACEHOLDER_DATA) {
+          setPosts(MOCK_POSTS);
+          setLoading(false);
+          return;
+        }
+
+        // Fetch first 5 posts from API
         const postsPromises = Array.from({ length: 5 }, (_, i) => 
           fetch(`http://localhost:8080/api/posts/${i + 1}`)
             .then(res => res.ok ? res.json() : null)
@@ -86,6 +96,18 @@ export function PostCardList() {
     fetchPosts();
   }, []);
 
+  const handleViewDetails = (post: Post) => {
+    router.push(`/browse/post/${post.id}`);
+  };
+
+  const handleMessage = () => {
+    if (isSignedIn()) {
+      alert('Message seller functionality coming soon');
+    } else {
+      alert('Sign in to message sellers');
+    }
+  };
+
   if (loading) {
     return <div className="text-center py-4">Loading posts...</div>;
   }
@@ -105,8 +127,8 @@ export function PostCardList() {
           <PostCard
             key={`${post.id}-${idx}`}
             post={post}
-            onViewDetails={(post) => alert('Sign in to view details')}
-            onMessage={(post) => alert('Sign in to message sellers')}
+            onViewDetails={handleViewDetails}
+            onMessage={handleMessage}
           />
         ))}
       </div>

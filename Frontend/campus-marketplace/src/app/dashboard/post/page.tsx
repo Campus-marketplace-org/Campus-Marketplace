@@ -2,18 +2,19 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createPost } from '@/src/lib/api/posts';
+import { createPostWithImage } from '@/src/lib/api/posts';
 
 export default function CreatePostPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
     askingPrice: '',
     category: '',
-    imageUrl: '',
   });
 
   const categories = [
@@ -25,6 +26,19 @@ export default function CreatePostPage() {
     'Other',
   ];
 
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setImageFile(file);
+      // Create preview
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -32,12 +46,14 @@ export default function CreatePostPage() {
 
     try {
       const postData = {
-        ...formData,
+        title: formData.title,
+        description: formData.description,
         askingPrice: parseFloat(formData.askingPrice),
+        category: formData.category,
       };
 
-      await createPost(postData);
-      router.push('/dashboard/listing');
+      await createPostWithImage(postData, imageFile || undefined);
+      router.push('/browse');
     } catch (err) {
       setError('Failed to create post. Please try again.');
       console.error('Error creating post:', err);
@@ -125,17 +141,27 @@ export default function CreatePostPage() {
         </div>
 
         <div>
-          <label htmlFor="imageUrl" className="block text-sm font-medium text-gray-700">
-            Image URL
+          <label htmlFor="image" className="block text-sm font-medium text-gray-700">
+            Product Image
           </label>
           <input
-            type="url"
-            id="imageUrl"
-            name="imageUrl"
-            value={formData.imageUrl}
-            onChange={handleChange}
-            className="mt-1 block w-full rounded border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            type="file"
+            id="image"
+            name="image"
+            accept="image/*"
+            onChange={handleImageChange}
+            className="mt-1 block w-full"
           />
+          {imagePreview && (
+            <div className="mt-4">
+              <p className="text-sm text-gray-600 mb-2">Image Preview:</p>
+              <img
+                src={imagePreview}
+                alt="Preview"
+                className="max-w-xs h-48 object-cover rounded border border-gray-200"
+              />
+            </div>
+          )}
         </div>
 
         {error && (

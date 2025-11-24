@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Post } from '@/src/types/post';
 import PostCard from '@/src/components/PostCards';
 import { getAllPosts } from '@/src/lib/api/posts';
+import { CONFIG, MOCK_POSTS } from '@/src/config/mockData';
 
 export default function ListingPage() {
   const [posts, setPosts] = useState<Post[]>([]);
@@ -17,11 +18,22 @@ export default function ListingPage() {
   useEffect(() => {
     async function fetchPosts() {
       try {
+        // Use placeholder data if enabled
+        if (CONFIG.USE_PLACEHOLDER_DATA) {
+          setPosts(MOCK_POSTS);
+          setLoading(false);
+          return;
+        }
+
         const postsData = await getAllPosts();
         setPosts(postsData);
       } catch (err) {
         setError('Failed to load posts');
         console.error('Error fetching posts:', err);
+        // Fallback to placeholder data on error
+        if (CONFIG.USE_PLACEHOLDER_DATA) {
+          setPosts(MOCK_POSTS);
+        }
       } finally {
         setLoading(false);
       }

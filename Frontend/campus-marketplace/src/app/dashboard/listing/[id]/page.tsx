@@ -5,6 +5,7 @@ import { Post } from '@/src/types/post';
 import { getPostById } from '@/src/lib/api/posts';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import { CONFIG, MOCK_POSTS } from '@/src/config/mockData';
 
 export default function PostDetailPage({ params }: { params: { id: string } }) {
   const [post, setPost] = useState<Post | null>(null);
@@ -15,6 +16,18 @@ export default function PostDetailPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     async function fetchPost() {
       try {
+        // Use placeholder data if enabled
+        if (CONFIG.USE_PLACEHOLDER_DATA) {
+          const mockPost = MOCK_POSTS.find(p => p.id === parseInt(params.id));
+          if (mockPost) {
+            setPost(mockPost);
+          } else {
+            setError('Post not found');
+          }
+          setLoading(false);
+          return;
+        }
+
         const postData = await getPostById(parseInt(params.id));
         setPost(postData);
       } catch (err) {

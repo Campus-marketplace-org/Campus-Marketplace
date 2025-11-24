@@ -2,23 +2,7 @@
 
 import { useState } from 'react';
 import { Message } from '@/src/types/message';
-
-const dummyMessages: Message[] = [
-  {
-    id: 1,
-    from: { id: 1, username: 'user1' },
-    to: { id: 2, username: 'user2' },
-    content: 'Hi, is this item still available?',
-    timestamp: new Date(2025, 10, 1, 10, 30).toISOString(),
-  },
-  {
-    id: 2,
-    from: { id: 2, username: 'user2' },
-    to: { id: 1, username: 'user1' },
-    content: 'Yes, it is! When would you like to meet?',
-    timestamp: new Date(2025, 10, 1, 10, 35).toISOString(),
-  },
-];
+import { CONFIG, MOCK_MESSAGES, getCurrentUser, getMessagesBetweenUsers } from '@/src/config/mockData';
 
 interface MessageItemProps {
   message: Message;
@@ -45,10 +29,12 @@ function MessageItem({ message, isCurrentUser }: MessageItemProps) {
 }
 
 export default function MessagePage() {
-  const [messages] = useState<Message[]>(dummyMessages);
+  // Use mock data and auth configuration
+  const currentUser = CONFIG.USE_MOCK_AUTH ? getCurrentUser() : null;
+  const [messages] = useState<Message[]>(CONFIG.USE_PLACEHOLDER_DATA ? MOCK_MESSAGES : []);
   const [newMessage, setNewMessage] = useState('');
   // In a real app, this would come from authentication context
-  const currentUserId = 1;
+  const currentUserId = currentUser?.id || CONFIG.MOCK_USER_ID;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,6 +44,16 @@ export default function MessagePage() {
     console.log('Sending message:', newMessage);
     setNewMessage('');
   };
+
+  // Get unique conversation partners
+  const conversationPartners = Array.from(
+    new Set(
+      messages
+        .flatMap(msg => [msg.from, msg.to])
+        .filter(user => user.id !== currentUserId)
+        .map(user => JSON.stringify(user))
+    )
+  ).map(str => JSON.parse(str));
 
   return (
     <div className="h-[calc(100vh-4rem)] flex flex-col">
@@ -77,15 +73,19 @@ export default function MessagePage() {
               />
             </div>
             <div className="overflow-y-auto">
-              {['User 2', 'User 3', 'User 4'].map((user) => (
-                <div
-                  key={user}
-                  className="p-4 border-b hover:bg-gray-50 cursor-pointer"
-                >
-                  <div className="font-medium">{user}</div>
-                  <div className="text-sm text-gray-500">Last message...</div>
-                </div>
-              ))}
+              {conversationPartners.length > 0 ? (
+                conversationPartners.map((user) => (
+                  <div
+                    key={user.id}
+                    className="p-4 border-b hover:bg-gray-50 cursor-pointer"
+                  >
+                    <div className="font-medium">{user.username}</div>
+                    <div className="text-sm text-gray-500">{user.email}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="p-4 text-gray-500">No conversations yet</div>
+              )}
             </div>
           </div>
 
@@ -93,13 +93,19 @@ export default function MessagePage() {
           <div className="flex-1 flex flex-col">
             {/* Messages list */}
             <div className="flex-1 overflow-y-auto p-4">
-              {messages.map((message) => (
-                <MessageItem
-                  key={message.id}
-                  message={message}
-                  isCurrentUser={message.from.id === currentUserId}
-                />
-              ))}
+              {messages.length > 0 ? (
+                messages.map((message) => (
+                  <MessageItem
+                    key={message.id}
+                    message={message}
+                    isCurrentUser={message.from.id === currentUserId}
+                  />
+                ))
+              ) : (
+                <div className="text-center text-gray-500 py-8">
+                  No messages yet. Start a conversation!
+                </div>
+              )}
             </div>
 
             {/* Message input */}

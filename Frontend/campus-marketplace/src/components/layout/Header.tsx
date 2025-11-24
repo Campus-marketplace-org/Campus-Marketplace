@@ -1,14 +1,38 @@
 // This could be a 'use client' component if it handles cart interaction state
 'use client'; 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { isSignedIn, signOut, CONFIG } from '@/src/config/mockData';
 
 export default function Header() {
 
   //useState for message count could be added here in the future
   const messageCount = 5; // Placeholder for actual state
   
-  //useState for user authentication state could be added here in the future
-  const isAuthenticated = true; // Placeholder for actual state
+  //Use mock authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const router = useRouter();
+
+  useEffect(() => {
+    // Set initial auth state
+    setIsAuthenticated(isSignedIn());
+
+    // Listen for auth changes
+    const handleAuthChange = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      setIsAuthenticated(customEvent.detail.isSignedIn);
+    };
+
+    window.addEventListener('auth-changed', handleAuthChange);
+    return () => window.removeEventListener('auth-changed', handleAuthChange);
+  }, []);
+
+  const handleSignOut = () => {
+    signOut();
+    setIsAuthenticated(false);
+    router.push('/');
+  };
 
   return (
     <header className="bg-white shadow-md sticky top-0 z-10">
@@ -25,7 +49,7 @@ export default function Header() {
         <nav className="flex space-x-4">
           {isAuthenticated ? (
             <>
-              <Link href="/dashboard/listing" className="text-gray-600 hover:text-gray-900">
+              <Link href="/browse" className="text-gray-600 hover:text-gray-900">
                 Browse
               </Link>
               <Link href="/dashboard/post" className="text-gray-600 hover:text-gray-900">
@@ -34,14 +58,22 @@ export default function Header() {
               <Link href="/dashboard/message" className="text-gray-600 hover:text-gray-900 flex items-center">
                 Messages ({messageCount})
               </Link>
-              <Link href="/" className="text-gray-600 hover:text-gray-900">
+              <button
+                onClick={handleSignOut}
+                className="text-gray-600 hover:text-gray-900 cursor-pointer bg-none border-none"
+              >
                 Sign Out
-              </Link>
+              </button>
             </>
           ) : (
-            <Link href="/signin" className="text-gray-600 hover:text-gray-900">
-              Sign In / Sign Up
-            </Link>
+            <>
+              <Link href="/browse" className="text-gray-600 hover:text-gray-900">
+                Browse
+              </Link>
+              <Link href="/signin" className="text-gray-600 hover:text-gray-900">
+                Sign In / Sign Up
+              </Link>
+            </>
           )}
           
         </nav>

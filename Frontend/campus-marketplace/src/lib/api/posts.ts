@@ -33,6 +33,31 @@ export async function createPost(post: Omit<Post, 'id'>): Promise<Post> {
   return response.json();
 }
 
+export async function createPostWithImage(
+  postData: {
+    title: string;
+    description: string;
+    askingPrice: number;
+    category: string;
+  },
+  imageFile?: File
+): Promise<Post> {
+  const formData = new FormData();
+  formData.append('post', JSON.stringify(postData));
+  if (imageFile) {
+    formData.append('image', imageFile);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/posts`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    throw new Error('Failed to create post');
+  }
+  return response.json();
+}
+
 export async function updatePost(id: number, post: Partial<Post>): Promise<Post> {
   const response = await fetch(`${API_BASE_URL}/posts/${id}`, {
     method: 'PUT',
