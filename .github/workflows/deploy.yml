@@ -8,9 +8,7 @@ on:
 concurrency:
   group: backend-ec2
   cancel-in-progress: true
-
   
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -66,69 +64,67 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
-          # Important: prevent early aborts; extend command timeout; add debug logs
           script_stop: false
           command_timeout: 30m
           debug: true
           envs: SPRING_DATASOURCE_PASSWORD,SUPABASE_S3_ACCESS_KEY,SUPABASE_S3_SECRET_KEY,JWT_SECRET
+          script: |
+            set -euo pipefail
+            APP_DIR="$HOME/app"
+            INCOMING="$APP_DIR/incoming"
+            cd "$APP_DIR"
+        
+            echo "[1/8] Incoming jars:" && ls -lR "$INCOMING" || true
+        
+            echo "[2/8] Select newest jar from incoming"
+            NEW_JAR="$(find "$INCOMING" -type f -name '*.jar' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
+            [[ -n "${NEW_JAR:-}" ]] || { echo "❌ No jar found in $INCOMING"; exit 1; }
+            NEW_SHA="$(sha256sum "$NEW_JAR" | awk '{print $1}')"
+            CUR_SHA="(none)"; [[ -f app.jar ]] && CUR_SHA="$(sha256sum app.jar | awk '{print $1}')"
+            echo "NEW_JAR=$NEW_JAR"
+            echo "NEW_SHA=$NEW_SHA"
+            echo "CUR_SHA=$CUR_SHA"
+        
+            echo "[3/8] Stop existing process"
+            if [[ -f app.pid ]]; then
+              PID="$(cat app.pid || true)"
+              if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
+                echo "Stopping PID $PID"; kill "$PID" || true
+              fi
+            fi
+            pgrep -af 'java -jar app.jar' || true
+            pkill -f -x 'java -jar app.jar' || true
+        
+            echo "[4/8] Wait for 8080 to free"
+            for i in {1..30}; do
+              ss -ltn '( sport = :8080 )' | grep -q 8080 && { echo "waiting... $i"; sleep 1; } || break
+            done
+            ss -ltn '( sport = :8080 )' | grep -q 8080 && { echo "❌ Port 8080 still busy"; ss -lptn '( sport = :8080 )' || true; exit 1; }
+        
+            echo "[5/8] Swap jar"
+            cp -f "$NEW_JAR" app-new.jar && mv -f app-new.jar app.jar
+            echo "app.jar sha256 now: $(sha256sum app.jar | awk '{print $1}')"
+            [[ "$(sha256sum app.jar | awk '{print $1}')" = "$NEW_SHA" ]]
+        
+            echo "[6/8] Start app"
+            nohup java -jar app.jar \
+              --spring.datasource.password="${SPRING_DATASOURCE_PASSWORD}" \
+              --supabase.s3.access-key="${SUPABASE_S3_ACCESS_KEY}" \
+              --supabase.s3.secret-key="${SUPABASE_S3_SECRET_KEY}" \
+              --jwt.secret="${JWT_SECRET}" \
+              --server.port=8080 \
+              > app.log 2>&1 &
+        
+            echo $! > app.pid
+            echo "New PID: $(cat app.pid)"
+        
+            echo "[7/8] Quick logs:"
+            sleep 2
+            tail -n 120 app.log || true
+        
+            echo "[8/8] Done"
         env:
           SPRING_DATASOURCE_PASSWORD: ${{ secrets.SPRING_DATASOURCE_PASSWORD }}
           SUPABASE_S3_ACCESS_KEY:     ${{ secrets.SUPABASE_S3_ACCESS_KEY }}
           SUPABASE_S3_SECRET_KEY:     ${{ secrets.SUPABASE_S3_SECRET_KEY }}
           JWT_SECRET:                 ${{ secrets.JWT_SECRET }}
-        script: |
-          set -euo pipefail
-          APP_DIR="$HOME/app"
-          INCOMING="$APP_DIR/incoming"
-          cd "$APP_DIR"
-      
-          echo "[1/8] Incoming jars:" && ls -lR "$INCOMING" || true
-      
-          echo "[2/8] Select newest jar from incoming"
-          NEW_JAR="$(find "$INCOMING" -type f -name '*.jar' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
-          [[ -n "${NEW_JAR:-}" ]] || { echo "❌ No jar found in $INCOMING"; exit 1; }
-          NEW_SHA="$(sha256sum "$NEW_JAR" | awk '{print $1}')"
-          CUR_SHA="(none)"; [[ -f app.jar ]] && CUR_SHA="$(sha256sum app.jar | awk '{print $1}')"
-          echo "NEW_JAR=$NEW_JAR"
-          echo "NEW_SHA=$NEW_SHA"
-          echo "CUR_SHA=$CUR_SHA"
-      
-          echo "[3/8] Stop existing process"
-          if [[ -f app.pid ]]; then
-            PID="$(cat app.pid || true)"
-            if [[ -n "${PID:-}" ]] && kill -0 "$PID" 2>/dev/null; then
-              echo "Stopping PID $PID"; kill "$PID" || true
-            fi
-          fi
-          pgrep -af 'java -jar app.jar' || true
-          pkill -f -x 'java -jar app.jar' || true
-      
-          echo "[4/8] Wait for 8080 to free"
-          for i in {1..30}; do
-            ss -ltn '( sport = :8080 )' | grep -q 8080 && { echo "waiting... $i"; sleep 1; } || break
-          done
-          ss -ltn '( sport = :8080 )' | grep -q 8080 && { echo "❌ Port 8080 still busy"; ss -lptn '( sport = :8080 )' || true; exit 1; }
-      
-          echo "[5/8] Swap jar"
-          cp -f "$NEW_JAR" app-new.jar && mv -f app-new.jar app.jar
-          echo "app.jar sha256 now: $(sha256sum app.jar | awk '{print $1}')"
-          [[ "$(sha256sum app.jar | awk '{print $1}')" = "$NEW_SHA" ]]
-      
-          echo "[6/8] Start app"
-          nohup java -jar app.jar \
-            --spring.datasource.password="${SPRING_DATASOURCE_PASSWORD}" \
-            --supabase.s3.access-key="${SUPABASE_S3_ACCESS_KEY}" \
-            --supabase.s3.secret-key="${SUPABASE_S3_SECRET_KEY}" \
-            --jwt.secret="${JWT_SECRET}" \
-            --server.port=8080 \
-            > app.log 2>&1 &
-      
-          echo $! > app.pid
-          echo "New PID: $(cat app.pid)"
-      
-          echo "[7/8] Quick logs:"
-          sleep 2
-          tail -n 120 app.log || true
-      
-          echo "[8/8] Done"
-
