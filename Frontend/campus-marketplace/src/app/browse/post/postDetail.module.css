@@ -1,0 +1,7 @@
+/* Post Detail Page Styles */
+
+.postImage {
+  background-size: cover;
+  background-position: center;
+  height: 384px;
+}

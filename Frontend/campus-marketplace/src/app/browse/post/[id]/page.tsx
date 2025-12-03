@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Post } from '@/src/types/post';
 import { CONFIG, MOCK_POSTS, isSignedIn } from '@/src/config/mockData';
+import styles from '../postDetail.module.css';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
 
@@ -132,7 +133,7 @@ export default function PostDetailPage() {
           {/* Image */}
           <div className="mb-6">
             <div
-              className="w-full h-96 rounded-lg shadow-md bg-cover bg-center"
+              className={`w-full rounded-lg shadow-md bg-cover bg-center ${styles.postImage}`}
               style={{
                 backgroundImage: `url(${post.imageUrl})`,
               }}

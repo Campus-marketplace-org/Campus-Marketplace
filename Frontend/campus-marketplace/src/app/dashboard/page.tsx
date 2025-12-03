@@ -3,60 +3,41 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Post } from '@/src/types/post';
-import { getAllPosts } from '@/src/lib/api/posts';
-import PostCard from '@/src/components/PostCards';
-import { CONFIG, MOCK_POSTS } from '@/src/config/mockData';
+import { PostCardList } from '@/src/components/PostCards';
+import { isSignedIn } from '@/src/config/mockData';
 
 export default function DashboardPage() {
-  const [recentPosts, setRecentPosts] = useState<Post[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
-    async function fetchRecentPosts() {
-      try {
-        // Use placeholder data if enabled
-        if (CONFIG.USE_PLACEHOLDER_DATA) {
-          setRecentPosts(MOCK_POSTS.slice(0, 3));
-          setLoading(false);
-          return;
-        }
+    // Set initial auth state
+    const authStatus = isSignedIn();
+    setIsAuthenticated(authStatus);
 
-        const posts = await getAllPosts();
-        // Get the 3 most recent posts
-        setRecentPosts(posts.slice(0, 3));
-      } catch (err) {
-        console.error('Error fetching posts:', err);
-        // Fallback to placeholder data on error
-        if (CONFIG.USE_PLACEHOLDER_DATA) {
-          setRecentPosts(MOCK_POSTS.slice(0, 3));
-        }
-      } finally {
-        setLoading(false);
-      }
-    }
+    // Listen for auth changes
+    const handleAuthChange = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      setIsAuthenticated(customEvent.detail.isSignedIn);
+    };
 
-    fetchRecentPosts();
+    window.addEventListener('auth-changed', handleAuthChange);
+    return () => window.removeEventListener('auth-changed', handleAuthChange);
   }, []);
 
-  const handleViewDetails = (post: Post) => {
-    router.push(`/browse/post/${post.id}`);
-  };
-
-  const handleMessage = (post: Post) => {
-    router.push(`/dashboard/message?userId=${post.Owner.id}`);
-  };
-
-  if (loading) {
-    return <div className="p-4">Loading...</div>;
+  if (!isAuthenticated) {
+    return (
+      <div className="p-4">
+        <p className="text-gray-500">You must be signed in to view the dashboard.</p>
+      </div>
+    );
   }
 
   return (
     <div className="p-4">
       <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         {/* Quick Actions */}
         <div className="bg-white p-6 rounded-lg shadow-md">
           <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
@@ -98,23 +79,12 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Recent Posts */}
+      {/* Trending Listings with Infinite Scroll */}
       <div className="mt-8">
-        <h2 className="text-lg font-semibold mb-4">Recent Posts</h2>
-        {recentPosts.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {recentPosts.map(post => (
-              <PostCard
-                key={post.id}
-                post={post}
-                onViewDetails={handleViewDetails}
-                onMessage={handleMessage}
-              />
-            ))}
-          </div>
-        ) : (
-          <p className="text-gray-500">No recent posts found.</p>
-        )}
+        <h2 className="text-lg font-semibold mb-4">Trending Listings</h2>
+        <div className="overflow-hidden pb-2">
+          <PostCardList />
+        </div>
       </div>
     </div>
   );

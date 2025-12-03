@@ -65,29 +65,20 @@ export default function AuthPage() {
     };
 
     return (
-        <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-            <div style={{ width: "100%", maxWidth: 880, display: "flex", gap: 24, alignItems: "stretch" }}>
-                {/* Left: informational / consistent with Home style */}
+        <main className="min-h-screen flex items-center justify-center p-6">
+            <div className="w-full max-w-7xl flex gap-6 items-stretch">
+                {/* Left: informational section */}
                 <section
                     aria-hidden
-                    style={{
-                        flex: 1,
-                        padding: 28,
-                        borderRadius: 12,
-                        background: "#f5f7fb",
-                        display: "flex",
-                        flexDirection: "column",
-                        justifyContent: "center",
-                        gap: 12,
-                    }}
+                    className="flex-1 p-7 rounded-xl bg-blue-50 flex flex-col justify-center gap-3"
                 >
-                    <h1 style={{ margin: 0, fontSize: 28 }}>Campus Marketplace</h1>
-                    <p style={{ margin: 0, color: "#444" }}>
+                    <h1 className="m-0 text-3xl font-bold">Campus Marketplace</h1>
+                    <p className="m-0 text-gray-700">
                         {mode === "signin"
                             ? "Welcome back! Sign in to access your listings and messages."
                             : "Create an account to start buying and selling on campus."}
                     </p>
-                    <ul style={{ marginTop: 12, paddingLeft: 18, color: "#555" }}>
+                    <ul className="mt-3 pl-4.5 text-gray-600">
                         <li>Quick listings</li>
                         <li>Private messaging</li>
                         <li>Student-only community</li>
@@ -95,27 +86,13 @@ export default function AuthPage() {
                 </section>
 
                 {/* Right: auth card */}
-                <section
-                    style={{
-                        width: 420,
-                        padding: 28,
-                        borderRadius: 12,
-                        boxShadow: "0 6px 20px rgba(0,0,0,0.06)",
-                        background: "#fff",
-                    }}
-                >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-                        <h2 style={{ margin: 0 }}>{mode === "signin" ? "Sign in" : "Create account"}</h2>
-                        <div style={{ fontSize: 13, color: "#666" }}>
+                <section className="w-96 p-7 rounded-xl shadow-lg bg-white">
+                    <div className="flex justify-between items-baseline mb-3">
+                        <h2 className="m-0 text-xl font-semibold">{mode === "signin" ? "Sign in" : "Create account"}</h2>
+                        <div className="text-xs text-gray-600">
                             <button
                                 onClick={() => switchMode(mode === "signin" ? "signup" : "signin")}
-                                style={{
-                                    background: "transparent",
-                                    border: "none",
-                                    color: "#2563eb",
-                                    cursor: "pointer",
-                                    padding: 6,
-                                }}
+                                className="bg-transparent border-none text-blue-600 cursor-pointer p-1.5 hover:underline"
                                 aria-label="Switch sign in sign up"
                             >
                                 {mode === "signin" ? "Need an account?" : "Have an account?"}
@@ -123,113 +100,103 @@ export default function AuthPage() {
                         </div>
                     </div>
 
-                    <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <form onSubmit={handleSubmit} className="flex flex-col gap-3">
                         {mode === "signup" && (
-                            <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                <span style={{ fontSize: 13, color: "#333" }}>Username</span>
+                            <label className="flex flex-col gap-1.5">
+                                <span className="text-xs text-gray-900 font-medium">Username</span>
                                 <input
                                     value={username}
                                     onChange={(e) => setUsername(e.target.value)}
                                     placeholder="Your username"
                                     required
-                                    style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid #ddd" }}
+                                    className="p-2.5 rounded-lg border border-gray-300 focus:outline-none focus:border-blue-500"
                                 />
                             </label>
                         )}
 
                         {mode === "signin" && (
-                            <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                <span style={{ fontSize: 13, color: "#333" }}>Username</span>
+                            <label className="flex flex-col gap-1.5">
+                                <span className="text-xs text-gray-900 font-medium">Username</span>
                                 <input
                                     value={username}
                                     onChange={(e) => setUsername(e.target.value)}
                                     placeholder="Your username"
                                     required
-                                    style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid #ddd" }}
+                                    className="p-2.5 rounded-lg border border-gray-300 focus:outline-none focus:border-blue-500"
                                 />
                             </label>
                         )}
 
                         {mode === "signup" && (
-                            <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                <span style={{ fontSize: 13, color: "#333" }}>Email</span>
+                            <label className="flex flex-col gap-1.5">
+                                <span className="text-xs text-gray-900 font-medium">Email</span>
                                 <input
                                     type="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
                                     placeholder="you@school.edu"
                                     required
-                                    style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid #ddd" }}
+                                    className="p-2.5 rounded-lg border border-gray-300 focus:outline-none focus:border-blue-500"
                                 />
                             </label>
                         )}
 
-                        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                            <span style={{ fontSize: 13, color: "#333" }}>Password</span>
+                        <label className="flex flex-col gap-1.5">
+                            <span className="text-xs text-gray-900 font-medium">Password</span>
                             <input
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 placeholder="••••••••"
                                 required
-                                style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid #ddd" }}
+                                className="p-2.5 rounded-lg border border-gray-300 focus:outline-none focus:border-blue-500"
                             />
                         </label>
 
                         {mode === "signup" && (
                             <>
-                                <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                    <span style={{ fontSize: 13, color: "#333" }}>Confirm password</span>
+                                <label className="flex flex-col gap-1.5">
+                                    <span className="text-xs text-gray-900 font-medium">Confirm password</span>
                                     <input
                                         type="password"
                                         value={confirmPassword}
                                         onChange={(e) => setConfirmPassword(e.target.value)}
                                         placeholder="Repeat password"
                                         required
-                                        style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid #ddd" }}
+                                        className="p-2.5 rounded-lg border border-gray-300 focus:outline-none focus:border-blue-500"
                                     />
                                 </label>
 
-                                <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                                    <span style={{ fontSize: 13, color: "#333" }}>College</span>
+                                <label className="flex flex-col gap-1.5">
+                                    <span className="text-xs text-gray-900 font-medium">College</span>
                                     <input
                                         value={college}
                                         onChange={(e) => setCollege(e.target.value)}
                                         placeholder="Your college name"
                                         required
-                                        style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid #ddd" }}
+                                        className="p-2.5 rounded-lg border border-gray-300 focus:outline-none focus:border-blue-500"
                                     />
                                 </label>
                             </>
                         )}
 
-                        {error && <div style={{ color: "crimson", fontSize: 13 }}>{error}</div>}
+                        {error && <div className="text-red-600 text-xs">{error}</div>}
 
                         <button
                             type="submit"
                             disabled={loading}
-                            style={{
-                                marginTop: 6,
-                                padding: "10px 12px",
-                                borderRadius: 8,
-                                background: "#2563eb",
-                                color: "#fff",
-                                border: "none",
-                                cursor: loading ? "default" : "pointer",
-                            }}
+                            className="mt-1.5 p-2.5 rounded-lg bg-blue-600 text-white border-none cursor-pointer hover:bg-blue-700 disabled:opacity-50 disabled:cursor-default transition-colors font-medium"
                         >
                             {loading ? "Working..." : mode === "signin" ? "Sign in" : "Create account"}
                         </button>
 
-                        <div style={{ fontSize: 13, color: "#666", marginTop: 6 }}>
-                            {/* Placeholder for third-party auth or password reset */}
+                        <div className="text-xs text-gray-600 mt-1.5">
                             <button
                                 type="button"
                                 onClick={() => {
-                                    // TODO: wire up password reset flow
                                     alert("Password reset flow (stub)");
                                 }}
-                                style={{ background: "transparent", border: "none", color: "#2563eb", cursor: "pointer", padding: 0 }}
+                                className="bg-transparent border-none text-blue-600 cursor-pointer p-0 hover:underline"
                             >
                                 Forgot password?
                             </button>

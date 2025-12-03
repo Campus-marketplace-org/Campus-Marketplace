@@ -1,0 +1,7 @@
+/* PostCard Component Styles */
+
+.cardImage {
+  background-size: cover;
+  background-position: center;
+  height: 170px;
+}

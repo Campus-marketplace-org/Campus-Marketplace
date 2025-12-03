@@ -1,0 +1,47 @@
+/* Infinite scroll carousel styles */
+
+/* adjustable speed (seconds) */
+:root {
+  --scroll-duration: 36s;
+}
+
+.scrollViewport {
+  overflow: hidden;
+}
+
+.scrollTrack {
+  display: inline-flex;
+  gap: 12px;
+  align-items: flex-start;
+  width: max-content;
+  will-change: transform;
+  animation: scroll var(--scroll-duration) linear infinite;
+}
+
+/* Pause when user hovers or focuses (accessibility) */
+.scrollViewport:hover .scrollTrack,
+.scrollViewport:focus-within .scrollTrack {
+  animation-play-state: paused;
+}
+
+/* seamless loop moves exactly half (the duplicated set) */
+@keyframes scroll {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+/* hide scrollbar if any */
+.scrollTrack::-webkit-scrollbar {
+  display: none;
+}
+
+/* respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .scrollTrack {
+    animation: none;
+  }
+}

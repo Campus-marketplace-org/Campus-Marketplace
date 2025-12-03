@@ -160,6 +160,9 @@ export default function BrowsePage() {
 
     return (
         <main className="container mx-auto px-4 py-8">
+            {/* Page Header */}
+            <h1 className="text-3xl font-bold mb-6">Browse Listings</h1>
+
             {/* Search Bar */}
             <div className="mb-8">
                 <Input
@@ -167,7 +170,7 @@ export default function BrowsePage() {
                     placeholder="Search items..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    className="max-w-xl"
+                    className="max-w-xl border border-gray-300 rounded px-3 py-2 focus:border-blue-500 focus:ring-blue-500"
                 />
             </div>
 
@@ -180,10 +183,11 @@ export default function BrowsePage() {
             {/* Unified view for all users */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 {/* Filters Section */}
-                <div className="space-y-6">
+                <div className="bg-white p-6 rounded-lg shadow-md h-fit">
+                    <h3 className="text-lg font-semibold mb-4">Filters</h3>
                     <div>
-                        <h3 className="font-semibold mb-3">Categories</h3>
-                        <div className="space-y-2">
+                        <h4 className="font-medium text-sm text-gray-700 mb-3">Categories</h4>
+                        <div className="space-y-3">
                             {categories.map((category) => (
                                 <div key={category} className="flex items-center space-x-2">
                                     <Checkbox
@@ -198,7 +202,7 @@ export default function BrowsePage() {
                                             setCurrentPage(1)
                                         }}
                                     />
-                                    <label htmlFor={category}>{category}</label>
+                                    <label htmlFor={category} className="text-sm cursor-pointer">{category}</label>
                                 </div>
                             ))}
                         </div>

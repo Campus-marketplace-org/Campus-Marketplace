@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import styles from './PostCards.module.css';
+import scrollStyles from './InfiniteScroll.module.css';
 
 // Type definitions based on backend Post entity
 import { Post } from '@/src/types/post';
@@ -20,7 +22,7 @@ export default function PostCard({ post, onViewDetails, onMessage }: PostCardPro
       role="listitem"
     >
       <div
-        className="h-[170px] rounded-lg bg-cover bg-center mb-3"
+        className={`rounded-lg bg-cover bg-center mb-3 ${styles.cardImage}`}
         style={{
           backgroundImage: `url(${post.imageUrl})`,
         }}
@@ -121,8 +123,8 @@ export function PostCardList() {
   }
 
   return (
-    <div className="auto-scroll-viewport">
-      <div className="auto-scroll-track">
+    <div className={scrollStyles.scrollViewport}>
+      <div className={scrollStyles.scrollTrack}>
         {[...posts, ...posts].map((post, idx) => (
           <PostCard
             key={`${post.id}-${idx}`}
