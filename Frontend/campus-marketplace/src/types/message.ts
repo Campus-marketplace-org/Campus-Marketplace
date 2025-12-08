@@ -1,13 +1,7 @@
 export interface Message {
-  id: number;
-  from: {
     id: number;
-    username: string;
-  };
-  to: {
-    id: number;
-    username: string;
-  };
-  content: string;
-  timestamp: string;
+    fromUsername: string;
+    toUsername: string;
+    timestamp: string; // ISO string from LocalDateTime
+    content: string;
 }
