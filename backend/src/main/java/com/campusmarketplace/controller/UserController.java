@@ -23,6 +23,12 @@ public class UserController {
         this.userService = userService;
     }
 
+    @GetMapping("/exists/{username}")
+    public ResponseEntity<Boolean> userExists(@PathVariable String username) {
+        boolean exists = userService.existsByUsername(username);
+        return ResponseEntity.ok(exists);
+    }
+
     @GetMapping
     public List<User> getAllUsers() {
         return userService.getAllUsers();

@@ -27,6 +27,11 @@ public class UserService {
                 .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
     }
 
+    public boolean existsByUsername(String username) {
+        return userRepository.existsByUsername(username);
+    }
+
+
     public User addUser(User user) {
         if (userRepository.existsByUsername(user.getUsername())) {
             throw new RuntimeException("User already exists with username: " + user.getUsername());
