@@ -39,6 +39,7 @@ export default function MessagePage() {
   const [error, setError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [conversationPartners, setConversationPartners] = useState<string[]>([]);
+  const [guestUsername, setGuestUsername] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Scroll to bottom of messages
@@ -50,7 +51,7 @@ export default function MessagePage() {
     scrollToBottom();
   }, [messages]);
 
-  // Get current user on mount
+  // Get current user on mount (optional - can use guest mode)
   useEffect(() => {
     const user = getUser();
     if (user) {
@@ -59,12 +60,13 @@ export default function MessagePage() {
   }, []);
 
   const fetchMessages = useCallback(async () => {
-    if (!selectedUser || !currentUser?.username) return;
+    const activeUsername = currentUser?.username || guestUsername;
+    if (!selectedUser || !activeUsername) return;
 
     setLoading(true);
     setError(null);
     try {
-      const msgs = await getMessagesBetweenUsers(currentUser.username, selectedUser);
+      const msgs = await getMessagesBetweenUsers(activeUsername, selectedUser);
       setMessages(msgs);
 
       // Update conversation partners list
@@ -77,14 +79,15 @@ export default function MessagePage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedUser, currentUser?.username, conversationPartners]);
+  }, [selectedUser, currentUser?.username, guestUsername, conversationPartners]);
 
   // Fetch messages when a user is selected
   useEffect(() => {
-    if (!selectedUser || !currentUser?.username) return;
+    const activeUsername = currentUser?.username || guestUsername;
+    if (!selectedUser || !activeUsername) return;
 
     fetchMessages();
-  }, [selectedUser, currentUser?.username, fetchMessages]);
+  }, [selectedUser, currentUser?.username, guestUsername, fetchMessages]);
 
 
   const handleSearchUser = async (e: React.FormEvent) => {
@@ -94,7 +97,8 @@ export default function MessagePage() {
       return;
     }
 
-    if (searchUsername === currentUser?.username) {
+    const activeUsername = currentUser?.username || guestUsername;
+    if (searchUsername === activeUsername) {
       setSearchError('You cannot message yourself');
       return;
     }
@@ -120,10 +124,11 @@ export default function MessagePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || !selectedUser || !currentUser?.username) return;
+    const activeUsername = currentUser?.username || guestUsername;
+    if (!newMessage.trim() || !selectedUser || !activeUsername) return;
 
     try {
-      const sentMsg = await sendMessage(currentUser.username, selectedUser, newMessage.trim());
+      const sentMsg = await sendMessage(activeUsername, selectedUser, newMessage.trim());
       setMessages(prev => [...prev, sentMsg]);
       setNewMessage('');
       setError(null);
@@ -137,7 +142,28 @@ export default function MessagePage() {
       <div className="bg-white rounded-lg shadow-md overflow-hidden">
         {/* Header */}
         <div className="border-b p-6">
-          <h1 className="text-2xl font-semibold">Messages</h1>
+          <div className="flex justify-between items-center">
+            <h1 className="text-2xl font-semibold">Messages</h1>
+            {currentUser ? (
+              <div className="text-gray-700">
+                Logged in as: <span className="font-semibold">{currentUser.username}</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <label htmlFor="guestUsername" className="text-sm text-gray-700">
+                  Your username:
+                </label>
+                <input
+                  id="guestUsername"
+                  type="text"
+                  value={guestUsername}
+                  onChange={(e) => setGuestUsername(e.target.value)}
+                  placeholder="Enter your username"
+                  className="px-3 py-1 border border-gray-300 rounded focus:border-blue-500 focus:ring-blue-500"
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex h-[600px]">
@@ -223,13 +249,16 @@ export default function MessagePage() {
               )}
               {!loading && !error && messages.length > 0 && (
                 <>
-                  {messages.map((message) => (
-                    <MessageItem
-                      key={message.id}
-                      message={message}
-                      isCurrentUser={message.fromUsername === currentUser?.username}
-                    />
-                  ))}
+                  {messages.map((message) => {
+                    const activeUsername = currentUser?.username || guestUsername;
+                    return (
+                      <MessageItem
+                        key={message.id}
+                        message={message}
+                        isCurrentUser={message.fromUsername === activeUsername}
+                      />
+                    );
+                  })}
                   <div ref={messagesEndRef} />
                 </>
               )}

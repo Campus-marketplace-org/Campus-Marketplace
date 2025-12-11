@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { isSignedIn, signOut, CONFIG } from '@/src/config/mockData';
+import { isSignedIn, signOut } from '@/src/config/mockData';
 
 export default function Header() {
 
@@ -69,6 +69,9 @@ export default function Header() {
             <>
               <Link href="/browse" className="text-gray-600 hover:text-gray-900">
                 Browse
+              </Link>
+              <Link href="/dashboard/message" className="text-gray-600 hover:text-gray-900">
+                Messages
               </Link>
               <Link href="/signin" className="text-gray-600 hover:text-gray-900">
                 Sign In / Sign Up
