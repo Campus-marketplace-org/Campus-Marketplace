@@ -3,9 +3,9 @@
 
 export const CONFIG = {
   // Enable/disable placeholder data
-  USE_PLACEHOLDER_DATA: true,
+  USE_PLACEHOLDER_DATA: false,
   // Enable/disable mock authentication (when true, user is considered signed in)
-  USE_MOCK_AUTH: true,
+  USE_MOCK_AUTH: false,
   // Mock user ID (used when USE_MOCK_AUTH is true)
   MOCK_USER_ID: 1,
   // Mock username
