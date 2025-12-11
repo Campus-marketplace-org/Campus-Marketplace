@@ -8,6 +8,7 @@ import scrollStyles from './InfiniteScroll.module.css';
 // Type definitions based on backend Post entity
 import { Post } from '@/src/types/post';
 import { CONFIG, MOCK_POSTS, isSignedIn } from '@/src/config/mockData';
+import { getAllPosts } from '@/src/lib/api/posts';
 
 export interface PostCardProps {
   post: Post;
@@ -77,16 +78,9 @@ export function PostCardList() {
           return;
         }
 
-        // Fetch first 5 posts from API
-        const postsPromises = Array.from({ length: 5 }, (_, i) => 
-          fetch(`http://localhost:8080/api/posts/${i + 1}`)
-            .then(res => res.ok ? res.json() : null)
-        );
-
-        const results = await Promise.all(postsPromises);
-        const validPosts = results.filter((post): post is Post => post !== null);
-        
-        setPosts(validPosts);
+        // Fetch all posts from API and take first 5
+        const allPosts = await getAllPosts();
+        setPosts(allPosts.slice(0, 5));
       } catch (err) {
         setError('Failed to load posts');
         console.error('Error fetching posts:', err);

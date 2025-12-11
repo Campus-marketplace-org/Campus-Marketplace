@@ -4,8 +4,7 @@ import { useRouter } from 'next/navigation'
 import { Post } from '@/src/types/post'
 import { CONFIG, MOCK_POSTS, isSignedIn } from '@/src/config/mockData'
 import PostCard from '@/src/components/PostCards'
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
+import { getAllPosts } from '@/src/lib/api/posts'
 
 // Simple component definitions
 const Card = ({ children, className = '' }: { children: React.ReactNode, className?: string }) => (
@@ -105,11 +104,7 @@ export default function BrowsePage() {
                     return
                 }
 
-                const response = await fetch(`${API_BASE_URL}/posts`)
-                if (!response.ok) {
-                    throw new Error('Failed to fetch posts')
-                }
-                const data = await response.json()
+                const data = await getAllPosts()
                 setPosts(data)
                 setError(null)
             } catch (err) {
